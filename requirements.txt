@@ -1,0 +1,48 @@
+# FastAPI & ASGI
+fastapi==0.120.1
+uvicorn[standard]==0.38.0
+python-multipart==0.0.6
+
+# Database
+SQLAlchemy==2.0.44
+alembic==1.12.1
+pymysql==1.1.0
+cryptography==46.0.3
+redis==5.0.1
+
+# Auth & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.2.1
+pydantic[email]==2.12.3
+pydantic-settings==2.11.0
+authlib==1.2.0
+httpx==0.28.1
+
+# RAG Dependencies (from your notebook)
+langchain==0.3.27
+langchain-core==0.3.79
+langchain-community==0.3.29
+langchain-elasticsearch==0.3.2
+langchain-google-genai==2.1.10
+langchain-huggingface==0.3.1
+langgraph==0.6.5
+sentence-transformers==5.0.0
+torch==2.7.1
+tiktoken==0.11.0
+elasticsearch==8.19.1
+
+# Utilities
+aioredis==2.0.1
+slowapi==0.1.9
+python-dateutil==2.9.0.post0
+pytz==2025.2
+
+# Monitoring & Logging
+structlog==23.2.0
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1
+faker==20.1.0
+httpx==0.28.1

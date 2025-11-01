@@ -1,0 +1,106 @@
+services:
+  # FastAPI Application
+  # app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: rag_service_app
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - DATABASE_URL=mysql+pymysql://raguser:ragpassword@mysql:3306/ragdb #🔴 hardcoded !
+  #     - REDIS_URL=redis://redis:6379/0 #🔴 hardcoded !
+  #     - ELASTICSEARCH_HOST=elasticsearch #🔴 hardcoded !
+  #   volumes:
+  #     - ./app:/app/app
+  #     - ./models:/app/models
+  #     - ./docs:/app/docs
+  #     - ./alembic:/app/alembic
+  #     - ./alembic.ini:/app/alembic.ini
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_started
+  #     elasticsearch:
+  #       condition: service_healthy
+  #   env_file:
+  #     - .env
+  #   restart: unless-stopped
+  #   networks:
+  #     - rag_network
+  #   # # 🟡 i added this 
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: all
+  #   #           capabilities: [gpu]
+
+  # MySQL Database
+  mysql:
+    image: mysql:8.0.39 #🔴 hardcoded !
+    container_name: rag_service_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ragdb}
+      MYSQL_USER: ${MYSQL_USER:-raguser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ragpassword}
+    ports:
+      - "3306:3306" #🔴 hardcoded !
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    network_mode: "host"
+    # networks:
+    #   - rag_network
+
+  # Redis Cache
+  redis:
+    image: valkey/valkey:8 #🔴 hardcoded !
+    container_name: rag_service_redis
+    ports:
+      - "6379:6379" #🔴 hardcoded !
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    network_mode: "host"
+    # networks:
+    #   - rag_network
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.3 #🔴 hardcoded !
+    container_name: rag_service_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD:-ragflow_test}
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    ports:
+      - "9200:9200" #🔴 hardcoded !
+      - "9300:9300" #🔴 hardcoded !
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -u elastic:${ELASTICSEARCH_PASSWORD:-ragflow_test} http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    network_mode: "host"  
+    # networks:
+    #   - rag_network
+
+volumes:
+  mysql_data:  #🔴
+  redis_data:  #🔴
+  elasticsearch_data:  #🔴
+
+networks:
+  rag_network:
+    driver: bridge #🔴 bridge ?
