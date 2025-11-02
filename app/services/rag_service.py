@@ -57,10 +57,10 @@ class RAGService:
             "processing_time_ms": processing_time,
             "retrieved_docs": [
                 {
-                    "content_preview": doc["content"][:200],
+                    "content_preview": doc["content"],
                     "metadata": doc["metadata"]
                 }
-                for doc in rag_result.get("retrieved_docs", [])[:3]  # Store top 3 only
+                for doc in rag_result.get("retrieved_docs", [])  # Store top 3 only
             ]
         }
         

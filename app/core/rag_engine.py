@@ -21,7 +21,7 @@ from app.config import settings
 
 # Set environment for tokenizers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
+DEBUG_MOD = settings.DEBUG
 
 class State(TypedDict):
     question: str
@@ -51,7 +51,7 @@ class Retriever:
         """Perform hybrid retrieval with reranking"""
         # Get candidates from both retrievers
         es_results = self.es_store.similarity_search(query, k=15)
-        bm25_results = self.bm25_retriever.get_relevant_documents(query)
+        bm25_results = self.bm25_retriever.get_relevant_documents(query) #🔴 depricated
         
         # Combine and deduplicate
         candidates = es_results + bm25_results
@@ -102,11 +102,14 @@ class RAGEngine:
             model_name=model_path,
             model_kwargs={
                 "device": "cuda" if torch.cuda.is_available() else "cpu",
+                "local_files_only": True,
                 "trust_remote_code": True,
             },
             encode_kwargs={'normalize_embeddings': True}
         )
         
+        print("Embedding Model Initialized") if DEBUG_MOD else None
+
         # Initialize Elasticsearch store
         self.es_store = ElasticsearchStore(
             es_url=settings.elasticsearch_url,
@@ -116,10 +119,10 @@ class RAGEngine:
             es_password=settings.ELASTICSEARCH_PASSWORD
         )
 
+        print("Elastic Initialized") if DEBUG_MOD else None
         
         self.docs = []
-        docs_path = Path("./docs/main/")  # Adjust to your docs location
-        
+        docs_path = Path(settings.DOC_PATH) 
         for json_file in docs_path.glob("*.json"):
             with open(json_file, 'r', encoding='utf-8') as f:
                 sections = json.load(f)
@@ -134,7 +137,17 @@ class RAGEngine:
                 self.docs.append(doc)
         
         print(f"Loaded {len(self.docs)} documents from {docs_path}")
-        
+
+        if settings.INDEX_THE_DOCS :
+            try:
+                self.es_store.client.indices.delete(index=settings.ELASTICSEARCH_INDEX_NAME)
+                print(f"old documents got eraised")
+            except Exception as e:
+                pass
+            finally:
+                self.es_store.add_documents(self.docs)
+            print(f"{len(self.docs)} documents Indexed from {docs_path}")
+
         # Initialize retriever
         self.hybrid_retriever = Retriever(
             es_store=self.es_store,
@@ -142,47 +155,59 @@ class RAGEngine:
             embeddings=self.embeddings,
             reranker_model=settings.RERANKER_MODEL_NAME,
             output_k=10,
-            use_reranker=False  # Set based on your config
+            use_reranker=settings.USE_RERANKER  # Set based on your config
         )
-        
+        print("Retriever Initialized") if DEBUG_MOD else None
+
         # Initialize LLMs
         self.query_enhancer_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-2.5-pro",
             temperature=0.2,
+            thinking_budget=int(settings.GENERATOR_THINKING_BUDGET/2),
             max_tokens=settings.ENHANCER_MAX_TOKEN,
+            max_retries=1,
             google_api_key=settings.GEMINI_API_KEY
         )
+        print("Query Enhancer Initialized") if DEBUG_MOD else None
         
         self.answer_generator_llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-pro",
             temperature=0.1,
             max_tokens=settings.ANSWER_LLM_MAX_TOKEN,
-            thinking_budget=settings.LLM_THINKING_BUDGET,
+            thinking_budget=settings.GENERATOR_THINKING_BUDGET,
             max_retries=1,
             google_api_key=settings.GEMINI_API_KEY
         )
-        
+        print("Answer Generator Initialized") if DEBUG_MOD else None
+
         # Build graph
         self._build_graph()
-        
         print("RAG Engine initialized successfully")
     
     def _build_graph(self):
         """Build the LangGraph workflow"""
         
         def enhance_query(state: State):
+            print("🟢graph invoked") if DEBUG_MOD else None
             messages = QUERY_ENHANCEMENT_PROMPT.invoke({
                 "question": state["question"],
                 "maxtoken": int(settings.ENHANCER_MAX_TOKEN * 0.4)
             })
-            response = self.query_enhancer_llm.invoke(messages)
-            enhanced = response.content.strip()
-            return {"enhanced_query": enhanced}
-            # return {"enhanced_query": "enhanced"}
+            if settings.LLM_TURNED_ON :
+                response = self.query_enhancer_llm.invoke(messages)
+                enhanced = response.content.strip()
+                print(f"🟢Query got Enhanced : {enhanced}") if DEBUG_MOD else None
+                return {"enhanced_query": enhanced}
+            
+            print(f"🟡Test query got Enhanced ") if DEBUG_MOD else None
+            return {"enhanced_query": " test - جهاد تبیین"}
         
         def retrieve_hybrid(state: State):
             query = state.get("enhanced_query", state["question"])
             retrieved_docs = self.hybrid_retriever.retrieve_with_reranking(query)
+
+            print("🟢Docs Retrieved") if DEBUG_MOD else None
+
             return {"docs": retrieved_docs}
         
         def generate_answer(state: State):
@@ -199,10 +224,14 @@ class RAGEngine:
                 "context": docs_content,
                 "maxtoken": int(settings.ANSWER_LLM_MAX_TOKEN * 0.7)
             })
-            response = self.answer_generator_llm.invoke(messages)
+
+            if settings.LLM_TURNED_ON :
+                response = self.answer_generator_llm.invoke(messages)
+                print("🟢Answer Generated") if DEBUG_MOD else None
+                return {"answer": response.content, "full_response": response} 
             
-            return {"answer": response.content, "full_response": response}
-            # return {"answer": "test", "full_response": "empty"}
+            print("🟡Test answer Generated") if DEBUG_MOD else None
+            return {"answer": "test",}
         
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)
@@ -229,13 +258,8 @@ class RAGEngine:
             "question": result.get("question"),
             "enhanced_query": result.get("enhanced_query"),
             "answer": result.get("answer"),
-            "retrieved_docs": [
-                {
-                    "content": doc.page_content,
-                    "metadata": doc.metadata
-                }
-                for doc in result.get("docs", [])
-            ]
+            "retrieved_docs": [{"content": doc.page_content,"metadata": doc.metadata} for doc in result.get("docs", [])],
+            # "full_responce" : result.get("full_response") #🔴🔴🔴 Remove it for production
         }
     
     def get_stats(self) -> Dict[str, Any]:
@@ -246,7 +270,6 @@ class RAGEngine:
             "documents_count": len(self.docs),
             "device": "cuda" if torch.cuda.is_available() else "cpu"
         }
-
 
 # Singleton instance
 rag_engine = RAGEngine()

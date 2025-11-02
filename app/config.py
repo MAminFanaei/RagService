@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     ENVIRONMENT: str = "production"
+    INDEX_THE_DOCS : bool = True
+    LLM_TURNED_ON : bool = True
     
     # Server
     HOST: str = "0.0.0.0"
@@ -59,12 +61,14 @@ class Settings(BaseSettings):
     # RAG Configuration
     EMBEDDING_MODEL_NAME: str = "Alibaba-NLP/gte-multilingual-base"
     RERANKER_MODEL_NAME: str = "Alibaba-NLP/gte-multilingual-base"
+    USE_RERANKER : bool = False
+    DOC_PATH : str = "./docs/main/"
     CHUNK_TOKENS: int = 900
     CHUNK_OVERLAP: int = 0
     MIN_CHUNK_LENGTH: int = 360
     ENHANCER_MAX_TOKEN: int = 600
     ANSWER_LLM_MAX_TOKEN: int = 2000
-    LLM_THINKING_BUDGET: int = 500
+    GENERATOR_THINKING_BUDGET: int = 500
     
     # Rate Limiting
     DEFAULT_RATE_LIMIT_PER_MINUTE: int = 100
