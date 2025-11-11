@@ -20,7 +20,7 @@ from app.prompts import QUERY_ENHANCEMENT_PROMPT, ANSWER_GENERATION_PROMPT
 from app.config import settings
 
 # Set environment for tokenizers
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TOKENIZERS_PARALLELISM"] = "false" #🔴
 DEBUG_MOD = settings.DEBUG
 
 class State(TypedDict):
@@ -40,8 +40,8 @@ class Retriever:
         self.embeddings = embeddings
         self.reranker_model = reranker_model
         self.bm25_retriever = BM25Retriever.from_documents(documents)
-        self.bm25_retriever.k = 15
         self.output_k = output_k
+        self.bm25_retriever.k = output_k*2
         self.use_reranker = use_reranker
         
         if self.use_reranker:
@@ -50,7 +50,7 @@ class Retriever:
     def retrieve_with_reranking(self, query: str) -> List[LangChainDocument]:
         """Perform hybrid retrieval with reranking"""
         # Get candidates from both retrievers
-        es_results = self.es_store.similarity_search(query, k=15)
+        es_results = self.es_store.similarity_search(query, k=self.output_k*2)
         bm25_results = self.bm25_retriever.get_relevant_documents(query) #🔴 depricated
         
         # Combine and deduplicate
@@ -58,7 +58,7 @@ class Retriever:
         seen = set()
         unique_candidates = []
         for doc in candidates:
-            doc_id = doc.page_content[:100]
+            doc_id = doc.page_content[:100] #🔴
             if doc_id not in seen:
                 seen.add(doc_id)
                 unique_candidates.append(doc)
@@ -71,7 +71,7 @@ class Retriever:
             scores = self.reranker.predict(pairs)
             doc_scores = list(zip(unique_candidates, scores))
             doc_scores.sort(key=lambda x: x[1], reverse=True)
-            return [doc for doc, score in doc_scores[:self.output_k]]
+            return [doc for doc, _ in doc_scores[:self.output_k]]
         else:
             return unique_candidates[:self.output_k]
 
@@ -154,26 +154,42 @@ class RAGEngine:
             documents=self.docs,
             embeddings=self.embeddings,
             reranker_model=settings.RERANKER_MODEL_NAME,
-            output_k=10,
+            output_k=settings.RETRIEVER_OUTPUT_K,
             use_reranker=settings.USE_RERANKER  # Set based on your config
         )
         print("Retriever Initialized") if DEBUG_MOD else None
 
         # Initialize LLMs
+        # self.query_enhancer_llm = ChatGoogleGenerativeAI(
+        #     model="gemini-2.5-flash",
+        #     temperature=0.3,
+        #     max_tokens=settings.ENHANCER_OUTPUT_TOKEN + settings.ENHANCER_THINKING_BUDGET,
+        #     thinking_budget=settings.ENHANCER_THINKING_BUDGET,
+        #     max_retries=1,
+        #     google_api_key=settings.GEMINI_API_KEY
+        # )
         self.query_enhancer_llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-pro",
-            temperature=0.2,
-            thinking_budget=int(settings.GENERATOR_THINKING_BUDGET/2),
-            max_tokens=settings.ENHANCER_MAX_TOKEN,
+            temperature=0.3,
+            thinking_budget=settings.ENHANCER_THINKING_BUDGET,
+            max_tokens=settings.ENHANCER_OUTPUT_TOKEN + settings.ENHANCER_THINKING_BUDGET,
             max_retries=1,
             google_api_key=settings.GEMINI_API_KEY
         )
         print("Query Enhancer Initialized") if DEBUG_MOD else None
         
+        # self.answer_generator_llm = ChatGoogleGenerativeAI(
+        #     model="gemini-2.5-flash",
+        #     temperature=0,
+        #     max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN ,
+        #     thinking_budget=settings.GENERATOR_THINKING_BUDGET,
+        #     max_retries=1,
+        #     google_api_key=settings.GEMINI_API_KEY
+        # )
         self.answer_generator_llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-pro",
-            temperature=0.1,
-            max_tokens=settings.ANSWER_LLM_MAX_TOKEN,
+            temperature=0,
+            max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN,
             thinking_budget=settings.GENERATOR_THINKING_BUDGET,
             max_retries=1,
             google_api_key=settings.GEMINI_API_KEY
@@ -191,7 +207,7 @@ class RAGEngine:
             print("🟢graph invoked") if DEBUG_MOD else None
             messages = QUERY_ENHANCEMENT_PROMPT.invoke({
                 "question": state["question"],
-                "maxtoken": int(settings.ENHANCER_MAX_TOKEN * 0.4)
+                "maxtoken": settings.ENHANCER_OUTPUT_TOKEN
             })
             if settings.LLM_TURNED_ON :
                 response = self.query_enhancer_llm.invoke(messages)
@@ -200,7 +216,7 @@ class RAGEngine:
                 return {"enhanced_query": enhanced}
             
             print(f"🟡Test query got Enhanced ") if DEBUG_MOD else None
-            return {"enhanced_query": " test - جهاد تبیین"}
+            return {"enhanced_query": state["question"]}
         
         def retrieve_hybrid(state: State):
             query = state.get("enhanced_query", state["question"])
@@ -222,7 +238,7 @@ class RAGEngine:
             messages = ANSWER_GENERATION_PROMPT.invoke({
                 "question": state["question"],
                 "context": docs_content,
-                "maxtoken": int(settings.ANSWER_LLM_MAX_TOKEN * 0.7)
+                "maxtoken": settings.ANSWER_LLM_OUTPUT_TOKEN 
             })
 
             if settings.LLM_TURNED_ON :
@@ -231,7 +247,7 @@ class RAGEngine:
                 return {"answer": response.content, "full_response": response} 
             
             print("🟡Test answer Generated") if DEBUG_MOD else None
-            return {"answer": "test",}
+            return {"answer": "test-successfull",}
         
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)

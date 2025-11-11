@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str
     REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
+    REDIS_PORT: int 
     REDIS_PASSWORD: str = ""
     REDIS_DB: int = 0
     
@@ -59,28 +59,30 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str
     
     # RAG Configuration
-    EMBEDDING_MODEL_NAME: str = "Alibaba-NLP/gte-multilingual-base"
-    RERANKER_MODEL_NAME: str = "Alibaba-NLP/gte-multilingual-base"
+    EMBEDDING_MODEL_NAME: str 
+    RERANKER_MODEL_NAME: str 
     USE_RERANKER : bool = False
+    RETRIEVER_OUTPUT_K : int
     DOC_PATH : str = "./docs/main/"
-    CHUNK_TOKENS: int = 900
-    CHUNK_OVERLAP: int = 0
-    MIN_CHUNK_LENGTH: int = 360
-    ENHANCER_MAX_TOKEN: int = 600
-    ANSWER_LLM_MAX_TOKEN: int = 2000
-    GENERATOR_THINKING_BUDGET: int = 500
+    CHUNK_TOKENS: int 
+    CHUNK_OVERLAP: int 
+    MIN_CHUNK_LENGTH: int 
+    ENHANCER_OUTPUT_TOKEN: int 
+    ANSWER_LLM_OUTPUT_TOKEN: int 
+    GENERATOR_THINKING_BUDGET: int 
+    ENHANCER_THINKING_BUDGET: int 
     
     # Rate Limiting
-    DEFAULT_RATE_LIMIT_PER_MINUTE: int = 100
-    DEFAULT_RATE_LIMIT_LOGIN_PER_MINUTE: int = 10
-    DEFAULT_MAX_MESSAGES_PER_DAY: int = 500
+    DEFAULT_RATE_LIMIT_PER_MINUTE: int 
+    DEFAULT_RATE_LIMIT_LOGIN_PER_MINUTE: int 
+    DEFAULT_MAX_MESSAGES_PER_DAY: int 
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    CORS_ORIGINS: List[str] 
     CORS_ALLOW_CREDENTIALS: bool = True
     
     # Admin
-    ADMIN_EMAIL: str = "admin@example.com"
+    ADMIN_EMAIL: str 
     ADMIN_PASSWORD: str
     
     # Logging

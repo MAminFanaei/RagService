@@ -1,7 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.core.database import get_db, get_redis
 from app.core.security import create_token_pair, decode_token, oauth
@@ -14,11 +12,9 @@ from app.config import settings
 import redis.asyncio as aioredis
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-@limiter.limit("10/minute")
 async def register(
     request: Request,
     user_data: UserCreate,
@@ -56,7 +52,6 @@ async def register(
 
 
 @router.post("/login", response_model=Token)
-@limiter.limit(f"{settings.DEFAULT_RATE_LIMIT_LOGIN_PER_MINUTE}/minute")
 async def login(
     request: Request,
     credentials: UserLogin,
