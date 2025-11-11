@@ -30,7 +30,7 @@ class Message(Base):
     # RAG Metadata (JSONB stores: enhanced_query, docs_retrieved, confidence, etc.)
     # metadata = Column(JSON, nullable=True)
     meta_data = Column("metadata", JSON , nullable=True)
-
+    usage = Column(JSON, nullable=True)
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     

@@ -46,6 +46,7 @@ class RAGService:
             db=db,
             chat_id=chat_id,
             role=MessageRole.USER,
+            usage={},
             content=question,
             metadata=None
         )
@@ -70,6 +71,7 @@ class RAGService:
             chat_id=chat_id,
             role=MessageRole.ASSISTANT,
             content=rag_result.get("answer", "I don't know"),
+            usage=rag_result.get("usage", "EMPTY_OUTPUT"),
             metadata=assistant_metadata
         )
         

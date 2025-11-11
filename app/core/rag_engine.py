@@ -247,7 +247,7 @@ class RAGEngine:
                 return {"answer": response.content, "full_response": response} 
             
             print("🟡Test answer Generated") if DEBUG_MOD else None
-            return {"answer": "test-successfull",}
+            return {"answer": "test-successfull"}
         
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)
@@ -274,6 +274,7 @@ class RAGEngine:
             "question": result.get("question"),
             "enhanced_query": result.get("enhanced_query"),
             "answer": result.get("answer"),
+            "usage": result.get("full_response").usage_metadata,
             "retrieved_docs": [{"content": doc.page_content,"metadata": doc.metadata} for doc in result.get("docs", [])],
             # "full_responce" : result.get("full_response") #🔴🔴🔴 Remove it for production
         }

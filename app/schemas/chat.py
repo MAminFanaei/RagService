@@ -24,6 +24,7 @@ class MessageResponse(BaseModel):
     chat_session_id: str
     role: str
     content: str
+    usage: dict
     order_index: int
     metadata: Optional[dict] = None
     created_at: datetime

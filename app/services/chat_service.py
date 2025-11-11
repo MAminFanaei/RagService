@@ -133,6 +133,7 @@ class ChatService:
         chat_id: str,
         role: MessageRole,
         content: str,
+        usage: dict,
         metadata: Optional[dict] = None
     ) -> Message:
         """Add a message to a chat"""
@@ -147,6 +148,7 @@ class ChatService:
             chat_session_id=chat_id,
             role=role,
             content=content,
+            usage = usage,
             order_index=order_index,
             metadata=metadata
         )
@@ -204,6 +206,7 @@ class ChatService:
                 {
                     "role": msg.role.value,
                     "content": msg.content,
+                    "usage": msg.usage,
                     "metadata": msg.metadata,
                     "created_at": msg.created_at.isoformat()
                 }
