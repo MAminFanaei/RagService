@@ -160,40 +160,47 @@ class RAGEngine:
         print("Retriever Initialized") if DEBUG_MOD else None
 
         # Initialize LLMs
-        # self.query_enhancer_llm = ChatGoogleGenerativeAI(
-        #     model="gemini-2.5-flash",
-        #     temperature=0.3,
-        #     max_tokens=settings.ENHANCER_OUTPUT_TOKEN + settings.ENHANCER_THINKING_BUDGET,
-        #     thinking_budget=settings.ENHANCER_THINKING_BUDGET,
-        #     max_retries=1,
-        #     google_api_key=settings.GEMINI_API_KEY
-        # )
         self.query_enhancer_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash",
             temperature=0.3,
-            thinking_budget=settings.ENHANCER_THINKING_BUDGET,
             max_tokens=settings.ENHANCER_OUTPUT_TOKEN + settings.ENHANCER_THINKING_BUDGET,
+            thinking_budget=0,
             max_retries=1,
             google_api_key=settings.GEMINI_API_KEY
         )
-        print("Query Enhancer Initialized") if DEBUG_MOD else None
-        
-        # self.answer_generator_llm = ChatGoogleGenerativeAI(
-        #     model="gemini-2.5-flash",
-        #     temperature=0,
-        #     max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN ,
-        #     thinking_budget=settings.GENERATOR_THINKING_BUDGET,
+        # self.query_enhancer_llm = ChatGoogleGenerativeAI(
+        #     model="gemini-2.5-pro",
+        #     temperature=0.3,
+        #     thinking_budget=settings.ENHANCER_THINKING_BUDGET,
+        #     max_tokens=settings.ENHANCER_OUTPUT_TOKEN + settings.ENHANCER_THINKING_BUDGET,
         #     max_retries=1,
         #     google_api_key=settings.GEMINI_API_KEY
         # )
+
+        # client = OpenAI(
+        #     api_key="your-avalai-api-key",
+        #     base_url="https://api.avalai.ir/v1",
+        #     )
+
+
+        print("Query Enhancer Initialized") if DEBUG_MOD else None
+        
         self.answer_generator_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash",
             temperature=0,
-            max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN,
+            max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN ,
             thinking_budget=settings.GENERATOR_THINKING_BUDGET,
             max_retries=1,
             google_api_key=settings.GEMINI_API_KEY
         )
+        # self.answer_generator_llm = ChatGoogleGenerativeAI(
+        #     model="gemini-2.5-pro",
+        #     temperature=0,
+        #     max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN,
+        #     thinking_budget=settings.GENERATOR_THINKING_BUDGET,
+        #     max_retries=1,
+        #     google_api_key=settings.GEMINI_API_KEY
+        # )
         print("Answer Generator Initialized") if DEBUG_MOD else None
 
         # Build graph
@@ -247,7 +254,7 @@ class RAGEngine:
                 return {"answer": response.content, "full_response": response} 
             
             print("🟡Test answer Generated") if DEBUG_MOD else None
-            return {"answer": "test-successfull"}
+            return {"answer": "test-successfull-2"}
         
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)
@@ -274,7 +281,7 @@ class RAGEngine:
             "question": result.get("question"),
             "enhanced_query": result.get("enhanced_query"),
             "answer": result.get("answer"),
-            "usage": result.get("full_response").usage_metadata,
+            "usage": result.get("full_response").usage_metadata if DEBUG_MOD else {},
             "retrieved_docs": [{"content": doc.page_content,"metadata": doc.metadata} for doc in result.get("docs", [])],
             # "full_responce" : result.get("full_response") #🔴🔴🔴 Remove it for production
         }

@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     
     # LLM
     GEMINI_API_KEY: str
+    AVALAI_API_KEY: str
     
     # RAG Configuration
     EMBEDDING_MODEL_NAME: str 
