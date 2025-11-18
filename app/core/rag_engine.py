@@ -16,8 +16,10 @@ from typing import TypedDict
 import json
 from pathlib import Path
 from app.prompts import QUERY_ENHANCEMENT_PROMPT, ANSWER_GENERATION_PROMPT
-
+from google import genai
+from google.genai import types
 from app.config import settings
+import app.test_message_collection as test_message_collection 
 
 # Set environment for tokenizers
 os.environ["TOKENIZERS_PARALLELISM"] = "false" #🔴
@@ -159,49 +161,11 @@ class RAGEngine:
         )
         print("Retriever Initialized") if DEBUG_MOD else None
 
-        # Initialize LLMs
-        self.query_enhancer_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.3,
-            max_tokens=settings.ENHANCER_OUTPUT_TOKEN + settings.ENHANCER_THINKING_BUDGET,
-            thinking_budget=0,
-            max_retries=1,
-            google_api_key=settings.GEMINI_API_KEY
+        self.llm_client = genai.Client(
+        api_key=settings.LLM_API_KEY, http_options={"base_url": settings.LLM_BASE_URL}
+        # api_key="aa-rEmKhITs86fQNC9oF3uVKs3MSMtuCa3u83pKnJQVJG8PlBG4", http_options={"base_url": "https://api.avalai.ir"}
         )
-        # self.query_enhancer_llm = ChatGoogleGenerativeAI(
-        #     model="gemini-2.5-pro",
-        #     temperature=0.3,
-        #     thinking_budget=settings.ENHANCER_THINKING_BUDGET,
-        #     max_tokens=settings.ENHANCER_OUTPUT_TOKEN + settings.ENHANCER_THINKING_BUDGET,
-        #     max_retries=1,
-        #     google_api_key=settings.GEMINI_API_KEY
-        # )
-
-        # client = OpenAI(
-        #     api_key="your-avalai-api-key",
-        #     base_url="https://api.avalai.ir/v1",
-        #     )
-
-
-        print("Query Enhancer Initialized") if DEBUG_MOD else None
-        
-        self.answer_generator_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0,
-            max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN ,
-            thinking_budget=settings.GENERATOR_THINKING_BUDGET,
-            max_retries=1,
-            google_api_key=settings.GEMINI_API_KEY
-        )
-        # self.answer_generator_llm = ChatGoogleGenerativeAI(
-        #     model="gemini-2.5-pro",
-        #     temperature=0,
-        #     max_tokens=settings.GENERATOR_THINKING_BUDGET + settings.ANSWER_LLM_OUTPUT_TOKEN,
-        #     thinking_budget=settings.GENERATOR_THINKING_BUDGET,
-        #     max_retries=1,
-        #     google_api_key=settings.GEMINI_API_KEY
-        # )
-        print("Answer Generator Initialized") if DEBUG_MOD else None
+        print("Language Model Client Initialized") if DEBUG_MOD else None
 
         # Build graph
         self._build_graph()
@@ -212,15 +176,22 @@ class RAGEngine:
         
         def enhance_query(state: State):
             print("🟢graph invoked") if DEBUG_MOD else None
-            messages = QUERY_ENHANCEMENT_PROMPT.invoke({
-                "question": state["question"],
-                "maxtoken": settings.ENHANCER_OUTPUT_TOKEN
-            })
+            instruction = QUERY_ENHANCEMENT_PROMPT.invoke({
+                "maxtoken": settings.ENHANCER_OUTPUT_TOKEN})
+            
             if settings.LLM_TURNED_ON :
-                response = self.query_enhancer_llm.invoke(messages)
-                enhanced = response.content.strip()
-                print(f"🟢Query got Enhanced : {enhanced}") if DEBUG_MOD else None
-                return {"enhanced_query": enhanced}
+                question = state["question"]
+                response = self.llm_client.models.generate_content(
+                    model=settings.QUERY_ENHANCER_MODEL_NAME,
+                    config=types.GenerateContentConfig(
+                        system_instruction= instruction,
+                        # max_output_tokens=settings.ENHANCER_OUTPUT_TOKEN,
+                        temperature = 0.3
+                    ),
+                    contents=f"<user_query>{question}</user_query>",
+                    )
+                print(f"🟢Query got Enhanced {response.text} ") if DEBUG_MOD else None
+                return {"enhanced_query": response.text}
             
             print(f"🟡Test query got Enhanced ") if DEBUG_MOD else None
             return {"enhanced_query": state["question"]}
@@ -242,19 +213,28 @@ class RAGEngine:
                 for i, doc in enumerate(state["docs"])
             ])
             
-            messages = ANSWER_GENERATION_PROMPT.invoke({
-                "question": state["question"],
+            instruction = ANSWER_GENERATION_PROMPT.invoke({
                 "context": docs_content,
                 "maxtoken": settings.ANSWER_LLM_OUTPUT_TOKEN 
             })
 
             if settings.LLM_TURNED_ON :
-                response = self.answer_generator_llm.invoke(messages)
+                question = state["question"]
+                response = self.llm_client.models.generate_content(
+                    model=settings.ANSWER_GENERATOR_MODEL_NAME,
+                    config=types.GenerateContentConfig(
+                        system_instruction= instruction,
+                        # max_output_tokens=settings.ANSWER_LLM_OUTPUT_TOKEN,
+                        temperature = 0.2
+                    ),
+                    contents=f"<user_query>{question}</user_query>",
+                    )
                 print("🟢Answer Generated") if DEBUG_MOD else None
-                return {"answer": response.content, "full_response": response} 
+                return {"answer": response.text, "full_response": response} 
             
             print("🟡Test answer Generated") if DEBUG_MOD else None
-            return {"answer": "test-successfull-2"}
+            fake_message = test_message_collection.test_message_2
+            return {"answer": fake_message}
         
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)
@@ -281,7 +261,8 @@ class RAGEngine:
             "question": result.get("question"),
             "enhanced_query": result.get("enhanced_query"),
             "answer": result.get("answer"),
-            "usage": result.get("full_response").usage_metadata if DEBUG_MOD else {},
+            # "usage": result.get("full_response").usage_metadata if DEBUG_MOD else {}, # 🔴 doesnt work with AVAILAI
+            "usage": {},
             "retrieved_docs": [{"content": doc.page_content,"metadata": doc.metadata} for doc in result.get("docs", [])],
             # "full_responce" : result.get("full_response") #🔴🔴🔴 Remove it for production
         }

@@ -2,13 +2,42 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, desc
 from typing import Optional, List
 from datetime import datetime
-
+import json
 from app.models.chat import ChatSession
 from app.models.message import Message, MessageRole
 
 
 class ChatService:
     """Business logic for chat operations"""
+    @staticmethod
+    def _clean_metadata(metadata):
+        """Remove non-serializable objects from metadata"""
+        if not metadata:
+            return None
+        
+        # Force to dict if it's not
+        if not isinstance(metadata, dict):
+            # If it's a string, parse it
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except:
+                    return {}
+            else:
+                return {}
+        
+        # Recursively clean
+        import json as json_lib
+        clean = {}
+        for key, value in metadata.items():
+            try:
+                # Test if value is JSON serializable
+                json_lib.dumps(value)
+                clean[key] = value
+            except (TypeError, ValueError):
+                # Skip non-serializable values
+                continue
+        return clean
     
     @staticmethod
     def create_chat(db: Session, user_id: str, title: str = "New Chat") -> ChatSession:
@@ -133,7 +162,7 @@ class ChatService:
         chat_id: str,
         role: MessageRole,
         content: str,
-        usage: dict,
+        usage: Optional[dict] = None,
         metadata: Optional[dict] = None
     ) -> Message:
         """Add a message to a chat"""
@@ -206,7 +235,7 @@ class ChatService:
                 {
                     "role": msg.role.value,
                     "content": msg.content,
-                    "usage": msg.usage,
+                    "usage": msg.usage ,
                     "metadata": msg.metadata,
                     "created_at": msg.created_at.isoformat()
                 }

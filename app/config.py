@@ -56,8 +56,10 @@ class Settings(BaseSettings):
     GITHUB_REDIRECT_URI: str = ""
     
     # LLM
-    GEMINI_API_KEY: str
-    AVALAI_API_KEY: str
+    LLM_API_KEY: str
+    LLM_BASE_URL : str
+    QUERY_ENHANCER_MODEL_NAME : str
+    ANSWER_GENERATOR_MODEL_NAME : str
     
     # RAG Configuration
     EMBEDDING_MODEL_NAME: str 

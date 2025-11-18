@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 import enum
+import json
 
 from app.core.database import Base
 

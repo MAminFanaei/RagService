@@ -17,6 +17,25 @@ from app.config import settings
 import redis.asyncio as aioredis
 import time
 
+def _clean_metadata(metadata):
+    """Force metadata to be a clean dict"""
+    if metadata is None:
+        return None
+    
+    # If it's already a dict, return it
+    if isinstance(metadata, dict):
+        return metadata
+    
+    # Try to convert to dict
+    try:
+        import json
+        # Test if it's serializable
+        json.dumps(metadata)
+        return metadata
+    except:
+        # Return empty dict if can't serialize
+        return {}
+    
 router = APIRouter(prefix="/chats", tags=["Chats"])
 
 
@@ -76,6 +95,20 @@ async def get_chat(
     
     messages = ChatService.get_messages(db, chat_id)
     
+    # CLEAN METADATA BEFORE RETURNING
+    cleaned_messages = []
+    for msg in messages:
+        msg_dict = {
+            "id": msg.id,
+            "chat_session_id": msg.chat_session_id,
+            "role": msg.role.value if hasattr(msg.role, 'value') else msg.role,
+            "content": msg.content,
+            "order_index": msg.order_index,
+            "metadata": _clean_metadata(msg.metadata),  # Clean here!
+            "created_at": msg.created_at
+        }
+        cleaned_messages.append(msg_dict)
+    
     return {
         "id": chat.id,
         "user_id": chat.user_id,
@@ -83,10 +116,30 @@ async def get_chat(
         "is_deleted": chat.is_deleted,
         "created_at": chat.created_at,
         "updated_at": chat.updated_at,
-        "message_count": len(messages),
-        "last_message_at": messages[-1].created_at if messages else None,
-        "messages": messages
+        "message_count": len(cleaned_messages),
+        "last_message_at": cleaned_messages[-1]["created_at"] if cleaned_messages else None,
+        "messages": cleaned_messages
     }
+
+
+def _clean_metadata(metadata):
+    """Force metadata to be a clean dict"""
+    if metadata is None:
+        return None
+    
+    # If it's already a dict, return it
+    if isinstance(metadata, dict):
+        return metadata
+    
+    # Try to convert to dict
+    try:
+        import json
+        # Test if it's serializable
+        json.dumps(metadata)
+        return metadata
+    except:
+        # Return empty dict if can't serialize
+        return {}
 
 
 @router.patch("/{chat_id}", response_model=ChatResponse)

@@ -46,7 +46,7 @@ class RAGService:
             db=db,
             chat_id=chat_id,
             role=MessageRole.USER,
-            usage={},
+            usage=None,
             content=question,
             metadata=None
         )
@@ -59,7 +59,7 @@ class RAGService:
             "retrieved_docs": [
                 {
                     "content_preview": doc["content"],
-                    "metadata": doc["metadata"]
+                    "metadata": dict(doc["metadata"]) if doc["metadata"] else {}
                 }
                 for doc in rag_result.get("retrieved_docs", [])  # Store top 3 only
             ]
