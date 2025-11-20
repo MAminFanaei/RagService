@@ -1,0 +1,87 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist/
+build/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Environment files
+!.env.example
+
+# Documentation (not needed in container)
+*.md
+!README.md
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Logs
+*.log
+logs/
+
+
+# Documents (mounted as volume)
+docs/*
+!docs/main/.gitkeep
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backups
+backups/
+
+# Nginx (not needed in app container)
+nginx/
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Scripts (not needed in runtime)
+*.sh
+verify_setup.py
+prepare_documents.py
+
+# Jupyter
+*.ipynb
+.ipynb_checkpoints
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
