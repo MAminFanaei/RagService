@@ -209,7 +209,8 @@ class RAGEngine:
                 return {"answer": "I don't know - no relevant documents were retrieved"}
             
             docs_content = "\n\n---Document Separator---\n\n".join([
-                f"Document {i+1}:\n{doc.page_content}"
+                # f"Document {i+1}:\n{doc.page_content}"
+                f"\n{doc.page_content}"
                 for i, doc in enumerate(state["docs"])
             ])
             
@@ -225,7 +226,7 @@ class RAGEngine:
                     config=types.GenerateContentConfig(
                         system_instruction= instruction,
                         # max_output_tokens=settings.ANSWER_LLM_OUTPUT_TOKEN,
-                        temperature = 0.2
+                        temperature = 0.1
                     ),
                     contents=f"<user_query>{question}</user_query>",
                     )
