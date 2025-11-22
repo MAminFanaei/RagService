@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
-.env
+# .env 🔴 add it later
 venv/
 *.log
 .DS_Store
+docs/
+
+
 
