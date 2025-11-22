@@ -1,42 +1,42 @@
 services:
   # FastAPI Application
-  # app:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   container_name: rag_service_app
-  #   ports:
-  #     - "8000:8000"
-  #   environment:
-  #     - DATABASE_URL=mysql+pymysql://raguser:ragpassword@mysql:3306/ragdb #🔴 hardcoded !
-  #     - REDIS_URL=redis://redis:6379/0 #🔴 hardcoded !
-  #     - ELASTICSEARCH_HOST=elasticsearch #🔴 hardcoded !
-  #   volumes:
-  #     - ./app:/app/app
-  #     - ./models:/app/models
-  #     - ./docs:/app/docs
-  #     - ./alembic:/app/alembic
-  #     - ./alembic.ini:/app/alembic.ini
-  #   depends_on:
-  #     mysql:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_started
-  #     elasticsearch:
-  #       condition: service_healthy
-  #   env_file:
-  #     - .env
-  #   restart: unless-stopped
-  #   networks:
-  #     - rag_network
-  #   # # 🟡 i added this 
-  #   # deploy:
-  #   #   resources:
-  #   #     reservations:
-  #   #       devices:
-  #   #         - driver: nvidia
-  #   #           count: all
-  #   #           capabilities: [gpu]
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_service_app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=mysql+pymysql://raguser:ragpassword@mysql:3306/ragdb #🔴 hardcoded !
+      - REDIS_URL=redis://redis:6379/0 #🔴 hardcoded !
+      - ELASTICSEARCH_HOST=elasticsearch #🔴 hardcoded !
+    volumes:
+      - ./app:/app/app
+      - ./models:/app/models
+      - ./docs:/app/docs
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - rag_network
+    # # 🟡 i added this 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # MySQL Database
   mysql:
@@ -55,9 +55,9 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       timeout: 20s
       retries: 10
-    network_mode: "host"
-    # networks:
-    #   - rag_network
+    # network_mode: "host"
+    networks:
+      - rag_network
 
   # Redis Cache
   redis:
@@ -68,9 +68,9 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
-    network_mode: "host"
-    # networks:
-    #   - rag_network
+    # network_mode: "host"
+    networks:
+      - rag_network
 
   # Elasticsearch
   elasticsearch:
@@ -92,9 +92,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-    network_mode: "host"  
-    # networks:
-    #   - rag_network
+    # network_mode: "host"  
+    networks:
+      - rag_network
 
 volumes:
   mysql_data:  #🔴
