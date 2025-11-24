@@ -40,7 +40,8 @@ services:
 
   # MySQL Database
   mysql:
-    image: mysql:8.0.39 #🔴 hardcoded !
+    # image: mysql:8.0.39 #🔴 hardcoded !
+    image: mysql:5.7.42 #🔴 hardcoded !
     container_name: rag_service_mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
@@ -74,7 +75,8 @@ services:
 
   # Elasticsearch
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.3 #🔴 hardcoded !
+    # image: docker.elastic.co/elasticsearch/elasticsearch:9.0.3 #🔴 hardcoded !
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0 #🔴 hardcoded !
     container_name: rag_service_elasticsearch
     environment:
       - discovery.type=single-node
