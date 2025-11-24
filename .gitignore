@@ -4,8 +4,5 @@ __pycache__/
 venv/
 *.log
 .DS_Store
-docs/
-models/
-
-
-repo-backup.git/
+docs/others/
+models/gte-multilingual-base
