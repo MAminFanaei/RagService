@@ -8,15 +8,18 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=mysql+pymysql://raguser:ragpassword@mysql:3306/ragdb #🔴 hardcoded !
-      - REDIS_URL=redis://redis:6379/0 #🔴 hardcoded !
-      - ELASTICSEARCH_HOST=elasticsearch #🔴 hardcoded !
+      - DATABASE_URL=${DATABASE_URL} #🔴 hardcoded !
+      - REDIS_URL=${REDIS_URL} #🔴 hardcoded !
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST} #🔴 hardcoded !
     volumes:
       - ./app:/app/app
       - ./models:/app/models
       - ./docs:/app/docs
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
     depends_on:
       mysql:
         condition: service_healthy
@@ -44,16 +47,16 @@ services:
     image: mysql:5.7.42 #🔴 hardcoded !
     container_name: rag_service_mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-ragdb}
-      MYSQL_USER: ${MYSQL_USER:-raguser}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ragpassword}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     ports:
       - "3306:3306" #🔴 hardcoded !
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$MYSQL_ROOT_PASSWORD || exit 1"]
       timeout: 20s
       retries: 10
     # network_mode: "host"

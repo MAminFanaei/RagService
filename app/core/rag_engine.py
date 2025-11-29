@@ -145,10 +145,10 @@ class RAGEngine:
                 self.es_store.client.indices.delete(index=settings.ELASTICSEARCH_INDEX_NAME)
                 print(f"old documents got eraised")
             except Exception as e:
-                pass
+                print(f"No old documents Found , trying to index new docs")
             finally:
                 self.es_store.add_documents(self.docs)
-            print(f"{len(self.docs)} documents Indexed from {docs_path}")
+                print(f"{len(self.docs)} documents Indexed from {docs_path}")
 
         # Initialize retriever
         self.hybrid_retriever = Retriever(
