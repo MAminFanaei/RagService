@@ -6,7 +6,7 @@ from langchain_core.documents import Document as LangChainDocument
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 from langchain_elasticsearch import ElasticsearchStore
-from langchain_google_genai import ChatGoogleGenerativeAI
+# from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import START, StateGraph, END
 from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.system import SystemMessage
