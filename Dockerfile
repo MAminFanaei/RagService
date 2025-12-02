@@ -27,9 +27,9 @@ WORKDIR /app
 COPY ./app ./app
 COPY ./alembic ./alembic
 COPY alembic.ini .
-
-# Create directories for models/docs if missing
-RUN mkdir -p /app/models /app/docs
+COPY .env .
+COPY ./docs .
+COPY ./models .
 
 # Expose FastAPI port
 EXPOSE 8000
