@@ -274,7 +274,7 @@ class RAGEngine:
     def get_stats(self) -> Dict[str, Any]:
         """Get RAG engine statistics"""
         return {
-            "model": settings.EMBEDDING_MODEL_NAME,
+            "model": settings.EMBEDDING_MODEL_PATH,
             "index": settings.ELASTICSEARCH_INDEX_NAME,
             "documents_count": len(self.docs),
             "device": "cuda" if torch.cuda.is_available() else "cpu"
