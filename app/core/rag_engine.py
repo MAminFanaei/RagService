@@ -20,6 +20,7 @@ from google import genai
 from google.genai import types
 from app.config import settings
 import app.test_message_collection as test_message_collection 
+import inspect
 
 # Set environment for tokenizers
 os.environ["TOKENIZERS_PARALLELISM"] = "false" #🔴
@@ -186,7 +187,8 @@ class RAGEngine:
                     config=types.GenerateContentConfig(
                         system_instruction= instruction,
                         # max_output_tokens=settings.ENHANCER_OUTPUT_TOKEN,
-                        temperature = 0.3
+                        temperature = 0.2,
+                        top_p=0.7
                     ),
                     contents=f"<user_query>{question}</user_query>",
                     )
@@ -226,7 +228,8 @@ class RAGEngine:
                     config=types.GenerateContentConfig(
                         system_instruction= instruction,
                         # max_output_tokens=settings.ANSWER_LLM_OUTPUT_TOKEN,
-                        temperature = 0.1
+                        temperature = 0.1,
+                        top_p=0.9
                     ),
                     contents=f"<user_query>{question}</user_query>",
                     )
@@ -248,7 +251,7 @@ class RAGEngine:
         graph_builder.add_edge("generate", END)
         
         self.graph = graph_builder.compile()
-    
+
     async def query(self, question: str) -> Dict[str, Any]:
         """Execute RAG query asynchronously"""
         loop = asyncio.get_event_loop()
@@ -264,6 +267,7 @@ class RAGEngine:
             "answer": result.get("answer"),
             # "usage": result.get("full_response").usage_metadata if DEBUG_MOD else {}, # 🔴 doesnt work with AVAILAI
             "usage": {},
+            # "usage": dict(inspect.getmembers(result.get("full_response"))) if DEBUG_MOD else {},
             "retrieved_docs": [{"content": doc.page_content,"metadata": doc.metadata} for doc in result.get("docs", [])],
             # "full_responce" : result.get("full_response") #🔴🔴🔴 Remove it for production
         }
