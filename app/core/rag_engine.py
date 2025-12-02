@@ -6,7 +6,7 @@ from langchain_core.documents import Document as LangChainDocument
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 from langchain_elasticsearch import ElasticsearchStore
-# from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import START, StateGraph, END
 from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.system import SystemMessage
@@ -20,6 +20,7 @@ from google import genai
 from google.genai import types
 from app.config import settings
 import app.test_message_collection as test_message_collection 
+import inspect
 
 # Set environment for tokenizers
 os.environ["TOKENIZERS_PARALLELISM"] = "false" #🔴
@@ -99,9 +100,8 @@ class RAGEngine:
         print("Initializing RAG Engine...")
         
         # Initialize embeddings
-        model_path = settings.EMBEDDING_MODEL_NAME
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_path,
+            model_name=settings.EMBEDDING_MODEL_PATH,
             model_kwargs={
                 "device": "cuda" if torch.cuda.is_available() else "cpu",
                 "local_files_only": True,
@@ -145,17 +145,17 @@ class RAGEngine:
                 self.es_store.client.indices.delete(index=settings.ELASTICSEARCH_INDEX_NAME)
                 print(f"old documents got eraised")
             except Exception as e:
-                print(f"No old documents Found , trying to index new docs")
+                pass
             finally:
                 self.es_store.add_documents(self.docs)
-                print(f"{len(self.docs)} documents Indexed from {docs_path}")
+            print(f"{len(self.docs)} documents Indexed from {docs_path}")
 
         # Initialize retriever
         self.hybrid_retriever = Retriever(
             es_store=self.es_store,
             documents=self.docs,
             embeddings=self.embeddings,
-            reranker_model=settings.RERANKER_MODEL_NAME,
+            reranker_model=settings.RERANKER_MODEL_PATH,
             output_k=settings.RETRIEVER_OUTPUT_K,
             use_reranker=settings.USE_RERANKER  # Set based on your config
         )
@@ -186,7 +186,8 @@ class RAGEngine:
                     config=types.GenerateContentConfig(
                         system_instruction= instruction,
                         # max_output_tokens=settings.ENHANCER_OUTPUT_TOKEN,
-                        temperature = 0.3
+                        temperature = 0.2,
+                        top_p=0.7
                     ),
                     contents=f"<user_query>{question}</user_query>",
                     )
@@ -226,7 +227,8 @@ class RAGEngine:
                     config=types.GenerateContentConfig(
                         system_instruction= instruction,
                         # max_output_tokens=settings.ANSWER_LLM_OUTPUT_TOKEN,
-                        temperature = 0.1
+                        temperature = 0.1,
+                        top_p=0.9
                     ),
                     contents=f"<user_query>{question}</user_query>",
                     )
@@ -248,7 +250,7 @@ class RAGEngine:
         graph_builder.add_edge("generate", END)
         
         self.graph = graph_builder.compile()
-    
+
     async def query(self, question: str) -> Dict[str, Any]:
         """Execute RAG query asynchronously"""
         loop = asyncio.get_event_loop()
@@ -264,6 +266,7 @@ class RAGEngine:
             "answer": result.get("answer"),
             # "usage": result.get("full_response").usage_metadata if DEBUG_MOD else {}, # 🔴 doesnt work with AVAILAI
             "usage": {},
+            # "usage": dict(inspect.getmembers(result.get("full_response"))) if DEBUG_MOD else {},
             "retrieved_docs": [{"content": doc.page_content,"metadata": doc.metadata} for doc in result.get("docs", [])],
             # "full_responce" : result.get("full_response") #🔴🔴🔴 Remove it for production
         }

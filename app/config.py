@@ -62,8 +62,8 @@ class Settings(BaseSettings):
     ANSWER_GENERATOR_MODEL_NAME : str
     
     # RAG Configuration
-    EMBEDDING_MODEL_NAME: str 
-    RERANKER_MODEL_NAME: str 
+    EMBEDDING_MODEL_PATH: str 
+    RERANKER_MODEL_PATH: str 
     USE_RERANKER : bool = False
     RETRIEVER_OUTPUT_K : int
     DOC_PATH : str = "./docs/main/"
