@@ -58,6 +58,15 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
+
+
+
+
+
+
+
+
+
   # MySQL Database
   mysql:
     image: mysql:8.0.39 #🔴 hardcoded !

@@ -232,7 +232,7 @@ ANSWER_LLM_MAX_TOKEN=2000
 docker-compose -f docker-compose.prod.yml up -d
 
 # Scale workers
-docker-compose -f docker-compose.prod.yml up -d --scale app=4
+docker-compose -f docker-compose.prod.yml up -d --scale app=4 🔴
 ```
 
 ## Monitoring
