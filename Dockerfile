@@ -31,6 +31,8 @@ COPY .env .
 COPY ./docs .
 COPY ./models .
 
+ENV WEB_CONCURRENCY=4
+
 # Expose FastAPI port
 EXPOSE 8000
 
@@ -38,5 +40,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run migrations and start server
-CMD ["sh", "-c", "alembic -c /app/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
+CMD ["sh", "-c", "alembic upgrade head && exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-4} -b 0.0.0.0:8000 --worker-connections 500 --timeout 30 --keep-alive 2 --log-level info --access-logfile -"]
+# # Run migrations and start server
+# CMD ["sh", "-c", "alembic -c /app/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]

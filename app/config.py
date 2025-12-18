@@ -13,38 +13,39 @@ class Settings(BaseSettings):
     LLM_TURNED_ON : bool = True
     
     # Server
-    HOST: str = "0.0.0.0"
+    HOST: str 
     PORT: int = 8000
     WORKERS: int = 4
     
     # Security
     SECRET_KEY: str
-    ALGORITHM: str = "HS256"
+    ALGORITHM: str 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # Database (MYSQL)
-    DATABASE_URL: str
     MYSQL_ROOT_PASSWORD: str 
     MYSQL_DATABASE: str 
     MYSQL_USER: str 
     MYSQL_PASSWORD: str 
-    
+    MYSQL_PORT : str
+    DATABASE_URL : str
     
     # Redis
-    REDIS_URL: str
-    REDIS_HOST: str = "localhost"
+    REDIS_HOST: str 
     REDIS_PORT: int 
     REDIS_PASSWORD: str = ""
-    REDIS_DB: int = 0
+    REDIS_DB: int
+    REDIS_URL : str
+
     
     # Elasticsearch
-    ELASTICSEARCH_SCHEME: str = "http"
-    ELASTICSEARCH_HOST: str = "localhost"
-    ELASTICSEARCH_PORT: int = 9200
-    ELASTICSEARCH_USERNAME: str = "elastic"
+    ELASTICSEARCH_SCHEME: str 
+    ELASTICSEARCH_HOST: str 
+    ELASTICSEARCH_PORT: int 
+    ELASTICSEARCH_USERNAME: str 
     ELASTICSEARCH_PASSWORD: str
-    ELASTICSEARCH_INDEX_NAME: str = "rag_documents"
+    ELASTICSEARCH_INDEX_NAME: str 
     
     # OAuth
     GOOGLE_CLIENT_ID: str = ""
@@ -64,9 +65,9 @@ class Settings(BaseSettings):
     # RAG Configuration
     EMBEDDING_MODEL_PATH: str 
     RERANKER_MODEL_PATH: str 
-    USE_RERANKER : bool = False
+    USE_RERANKER : bool 
     RETRIEVER_OUTPUT_K : int
-    DOC_PATH : str = "./docs/main/"
+    DOC_PATH : str 
     CHUNK_TOKENS: int 
     CHUNK_OVERLAP: int 
     MIN_CHUNK_LENGTH: int 
@@ -82,7 +83,7 @@ class Settings(BaseSettings):
     
     # CORS
     CORS_ORIGINS: List[str] 
-    CORS_ALLOW_CREDENTIALS: bool = True
+    CORS_ALLOW_CREDENTIALS: bool 
     
     # Admin
     ADMIN_EMAIL: str 
@@ -96,6 +97,15 @@ class Settings(BaseSettings):
     def elasticsearch_url(self) -> str:
         return f"{self.ELASTICSEARCH_SCHEME}://{self.ELASTICSEARCH_HOST}:{self.ELASTICSEARCH_PORT}"
     
+    # @property
+    # def redis_url(self) -> str:
+    #     return f"{self.REDIS_HOST}://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    # @property
+    # def database_url(self) -> str:
+    #     return f"mysql+pymysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@mysql:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}" 
+    
+
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -7,6 +7,7 @@ from app.config import settings
 
 # MySQL Database
 engine = create_engine(
+    # settings.database_url,
     settings.DATABASE_URL,
     pool_pre_ping=True,
     pool_size=20,
@@ -27,6 +28,7 @@ async def get_redis() -> aioredis.Redis:
     global redis_client
     if redis_client is None:
         redis_client = await aioredis.from_url(
+            # settings.redis_url,
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True

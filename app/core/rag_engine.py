@@ -191,7 +191,8 @@ class RAGEngine:
                     ),
                     contents=f"<user_query>{question}</user_query>",
                     )
-                print(f"🟢Query got Enhanced {response.text} ") if DEBUG_MOD else None
+                print(f"🟢Query got Enhanced ") if DEBUG_MOD else None
+                # print(f"🟢Query got Enhanced {response.text} ") if DEBUG_MOD else None
                 return {"enhanced_query": response.text}
             
             print(f"🟡Test query got Enhanced ") if DEBUG_MOD else None
