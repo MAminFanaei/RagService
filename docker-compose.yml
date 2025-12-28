@@ -1,20 +1,17 @@
 services:
-  # FastAPI Application
   app:
-    build:
+    build: 
       context: .
       dockerfile: Dockerfile
+    image: rag_service_app:latest
     container_name: rag_service_app
     ports:
       - "127.0.0.1:8000:8000"
-# - "8000:8000"
 
     environment:
-      - DATABASE_URL=${DATABASE_URL} #🔴 hardcoded !
-      # - DATABASE_URL= mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:${MYSQL_PORT}/${MYSQL_DATABASE} #🔴 hardcoded !
-      # - REDIS_URL=${REDIS_HOST}://${REDIS_HOST}:${REDIS_PORT}/{REDIS_DB} #🔴 hardcoded !
-      - REDIS_URL=${REDIS_URL} #🔴 hardcoded !
-      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST} #🔴 hardcoded !
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL} 
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
     volumes:
       - ./app:/app/app
       - ./models:/app/models
@@ -23,19 +20,28 @@ services:
       - ./alembic.ini:/app/alembic.ini
       - /etc/ssl/private/api-key.pem:/app/certs/api-key.pem:ro
       - /etc/ssl/certs/api-cert.pem:/app/certs/api-cert.pem:ro
-    # command: >
-    #   sh -c "alembic upgrade head &&
-    #          exec gunicorn app.main:app
-    #            -k uvicorn.workers.UvicornWorker
-    #            -w 4
-    #            -b 0.0.0.0:8000
-    #            --worker-connections 500 
-    #            --timeout 30
-    #            --keep-alive 2
-    #            --log-level info
-    #            --access-logfile -"
-    # sh -c "alembic upgrade head &&
-    #        uvicorn app.main:app --host 0.0.0.0 --port 8000 "
+
+    command:
+      - sh
+      - -c
+      - >
+          alembic upgrade head &&
+          exec gunicorn app.main:app
+          --worker-class uvicorn.workers.UvicornWorker
+          --workers 1
+          --bind 0.0.0.0:8000
+          --worker-connections 500
+          --timeout 30
+          --keep-alive 2
+          --log-level info
+          --access-logfile -
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
 
     depends_on:
       mysql:
@@ -44,28 +50,19 @@ services:
         condition: service_started
       elasticsearch:
         condition: service_healthy
+
     env_file:
       - .env
     restart: unless-stopped
     networks:
       - rag_network
-    # # 🟡 i added this 
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
-
-
-
-
-
-
-
-
-
+    deploy: # 🔴 VPS is cpu only
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # MySQL Database
   mysql:
@@ -128,10 +125,10 @@ services:
       - rag_network
 
 volumes:
-  mysql_data:  #🔴
-  redis_data:  #🔴
-  elasticsearch_data:  #🔴
+  mysql_data: 
+  redis_data: 
+  elasticsearch_data: 
 
 networks:
   rag_network:
-    driver: bridge #🔴 bridge ?
+    driver: bridge

@@ -104,6 +104,7 @@ class RAGEngine:
             model_name=settings.EMBEDDING_MODEL_PATH,
             model_kwargs={
                 "device": "cuda" if torch.cuda.is_available() else "cpu",
+                # "device": "cpu",
                 "local_files_only": True,
                 "trust_remote_code": True,
             },
