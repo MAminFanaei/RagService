@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"
     INDEX_THE_DOCS : bool = True
     LLM_TURNED_ON : bool = True
+    DEVICE : str
     
     # Server
     HOST: str 
@@ -80,6 +81,20 @@ class Settings(BaseSettings):
     DEFAULT_RATE_LIMIT_PER_MINUTE: int 
     DEFAULT_RATE_LIMIT_LOGIN_PER_MINUTE: int 
     DEFAULT_MAX_MESSAGES_PER_DAY: int 
+
+    # CONVERSATION MEMORY SETTINGS
+    # Memory behavior
+    ENABLE_CONVERSATION_MEMORY: bool = True
+    # How many previous messages to include in context
+    MEMORY_MAX_MESSAGES: int = 10  # 5 turns (user + assistant each)
+    # Max tokens for conversation history (approximate)
+    MEMORY_MAX_TOKENS: int = 2000
+    # Use Redis for caching active conversations
+    MEMORY_USE_REDIS_CACHE: bool = True
+    # Redis cache TTL for conversation context (seconds)
+    MEMORY_REDIS_TTL: int = 3600  # 1 hour
+    # Include retrieved docs from previous turns in context
+    MEMORY_INCLUDE_PREVIOUS_DOCS: bool = False
     
     # CORS
     CORS_ORIGINS: List[str] 

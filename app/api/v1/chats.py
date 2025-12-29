@@ -268,7 +268,8 @@ async def send_message(
         db=db,
         chat_id=chat_id,
         user_id=current_user.id,
-        question=message.content
+        question=message.content,
+        redis_client=redis  # <-- NEW: Pass redis for memory
     )
     processing_time = (time.time() - start_time) * 1000
     
@@ -278,4 +279,153 @@ async def send_message(
         "user_message": result["user_message"],
         "assistant_message": result["assistant_message"],
         "processing_time_ms": processing_time
+    }
+
+# Add this endpoint to app/api/v1/chats.py
+
+@router.get("/{chat_id}/memory")
+async def get_chat_memory(
+    chat_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis_client)
+):
+    """
+    [ADMIN ONLY] Get conversation memory for a chat.
+    
+    Shows exactly what context the RAG engine receives when processing queries.
+    Useful for debugging and monitoring memory functionality.
+    
+    Returns:
+    - Messages currently in memory
+    - Redis cache status
+    - Formatted context strings sent to LLM
+    """
+    # ==========================================
+    # ADMIN CHECK
+    # ==========================================
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    
+    # ==========================================
+    # VERIFY CHAT EXISTS
+    # ==========================================
+    # Admin can view any chat, so we use admin method
+    chat = ChatService.get_chat_admin(db, chat_id)
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat not found"
+        )
+    
+    # ==========================================
+    # CHECK SETTINGS
+    # ==========================================
+    from app.services.memory_service import memory_service
+    
+    if not settings.ENABLE_CONVERSATION_MEMORY:
+        return {
+            "status": "disabled",
+            "message": "Conversation memory is disabled in settings",
+            "settings": {
+                "ENABLE_CONVERSATION_MEMORY": False
+            }
+        }
+    
+    # ==========================================
+    # LOAD MEMORY CONTEXT
+    # ==========================================
+    try:
+        context = await memory_service.get_conversation_context(
+            db=db,
+            chat_id=chat_id,
+            user_id=chat.user_id,  # Use chat's owner, not current admin
+            redis_client=redis
+        )
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to load memory: {str(e)}",
+            "chat_id": chat_id
+        }
+    
+    # ==========================================
+    # CHECK REDIS CACHE STATUS
+    # ==========================================
+    redis_status = {
+        "enabled": settings.MEMORY_USE_REDIS_CACHE,
+        "cached": False,
+        "ttl_seconds": None
+    }
+    
+    if settings.MEMORY_USE_REDIS_CACHE:
+        try:
+            cache_key = f"conv_memory:{chat_id}"
+            cached_data = await redis.get(cache_key)
+            ttl = await redis.ttl(cache_key)
+            redis_status["cached"] = cached_data is not None
+            redis_status["ttl_seconds"] = ttl if ttl > 0 else None
+        except Exception:
+            redis_status["error"] = "Failed to check Redis"
+    
+    # ==========================================
+    # FORMAT CONTEXT (What LLM Actually Receives)
+    # ==========================================
+    formatted = {
+        "for_query_enhancement": None,
+        "for_answer_generation": None
+    }
+    
+    if context.has_history:
+        formatted["for_answer_generation"] = memory_service.format_for_answer_generation(context)
+    
+    # ==========================================
+    # BUILD RESPONSE
+    # ==========================================
+    return {
+        "status": "ok",
+        "chat_id": chat_id,
+        "chat_owner": chat.user_id,
+        "chat_title": chat.title,
+        
+        "memory": {
+            "has_history": context.has_history,
+            "messages_in_context": len(context.messages),
+            "total_messages_in_db": context.total_message_count,
+            "conversation_turns": context.turn_count,
+        },
+        
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "content_length": len(msg.content),
+                "created_at": msg.created_at.isoformat() if msg.created_at else None
+            }
+            for msg in context.messages
+        ],
+        
+        "redis_cache": redis_status,
+        
+        "formatted_context": {
+            "query_enhancement": {
+                "content": formatted["for_query_enhancement"],
+                "char_count": len(formatted["for_query_enhancement"]) if formatted["for_query_enhancement"] else 0
+            },
+            "answer_generation": {
+                "content": formatted["for_answer_generation"],
+                "char_count": len(formatted["for_answer_generation"]) if formatted["for_answer_generation"] else 0
+            }
+        },
+        
+        "settings": {
+            "ENABLE_CONVERSATION_MEMORY": settings.ENABLE_CONVERSATION_MEMORY,
+            "MEMORY_MAX_MESSAGES": settings.MEMORY_MAX_MESSAGES,
+            "MEMORY_MAX_TOKENS": settings.MEMORY_MAX_TOKENS,
+            "MEMORY_USE_REDIS_CACHE": settings.MEMORY_USE_REDIS_CACHE,
+            "MEMORY_REDIS_TTL": settings.MEMORY_REDIS_TTL
+        }
     }

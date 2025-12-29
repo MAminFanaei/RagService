@@ -1,68 +1,69 @@
 services:
-  app:
-    build: 
-      context: .
-      dockerfile: Dockerfile
-    image: rag_service_app:latest
-    container_name: rag_service_app
-    ports:
-      - "127.0.0.1:8000:8000"
 
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=${REDIS_URL} 
-      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
-    volumes:
-      - ./app:/app/app
-      - ./models:/app/models
-      - ./docs:/app/docs
-      - ./alembic:/app/alembic
-      - ./alembic.ini:/app/alembic.ini
-      - /etc/ssl/private/api-key.pem:/app/certs/api-key.pem:ro
-      - /etc/ssl/certs/api-cert.pem:/app/certs/api-cert.pem:ro
+  # app:
+  #   build: 
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   image: rag_service_app:latest
+  #   container_name: rag_service_app
+  #   ports:
+  #     - "127.0.0.1:8000:8000"
 
-    command:
-      - sh
-      - -c
-      - >
-          alembic upgrade head &&
-          exec gunicorn app.main:app
-          --worker-class uvicorn.workers.UvicornWorker
-          --workers 1
-          --bind 0.0.0.0:8000
-          --worker-connections 500
-          --timeout 30
-          --keep-alive 2
-          --log-level info
-          --access-logfile -
+  #   environment:
+  #     - DATABASE_URL=${DATABASE_URL}
+  #     - REDIS_URL=${REDIS_URL} 
+  #     - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
+  #   volumes:
+  #     - ./app:/app/app
+  #     - ./models:/app/models
+  #     - ./docs:/app/docs
+  #     - ./alembic:/app/alembic
+  #     - ./alembic.ini:/app/alembic.ini
+  #     - /etc/ssl/private/api-key.pem:/app/certs/api-key.pem:ro
+  #     - /etc/ssl/certs/api-cert.pem:/app/certs/api-cert.pem:ro
 
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      start_period: 40s
-      retries: 3
+    # command:
+    #   - sh
+    #   - -c
+    #   - >
+    #       alembic upgrade head &&
+    #       exec gunicorn app.main:app
+    #       --worker-class uvicorn.workers.UvicornWorker
+    #       --workers 1
+    #       --bind 0.0.0.0:8000
+    #       --worker-connections 500
+    #       --timeout 30
+    #       --keep-alive 2
+    #       --log-level info
+    #       --access-logfile -
 
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      elasticsearch:
-        condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     start_period: 40s
+  #     retries: 3
 
-    env_file:
-      - .env
-    restart: unless-stopped
-    networks:
-      - rag_network
-    deploy: # 🔴 VPS is cpu only
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_started
+  #     elasticsearch:
+  #       condition: service_healthy
+
+  #   env_file:
+  #     - .env
+  #   restart: unless-stopped
+  #   networks:
+  #     - rag_network
+  #   deploy: # 🔴 VPS is cpu only
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
 
   # MySQL Database
   mysql:
@@ -82,9 +83,9 @@ services:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$MYSQL_ROOT_PASSWORD || exit 1"]
       timeout: 20s
       retries: 10
-    # network_mode: "host"
-    networks:
-      - rag_network
+    network_mode: "host"
+    # networks:
+    #   - rag_network
 
   # Redis Cache
   redis:
@@ -95,9 +96,9 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
-    # network_mode: "host"
-    networks:
-      - rag_network
+    network_mode: "host"
+    # networks:
+    #   - rag_network
 
   # Elasticsearch
   elasticsearch:
@@ -120,9 +121,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-    # network_mode: "host"  
-    networks:
-      - rag_network
+    network_mode: "host"  
+    # networks:
+    #   - rag_network
 
 volumes:
   mysql_data: 
