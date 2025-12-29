@@ -1,12 +1,18 @@
+# app/core/security.py
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from authlib.integrations.starlette_client import OAuth
+import redis.asyncio as aioredis
+
 from app.config import settings
 
 # Password hashing
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+# Token blacklist settings
+TOKEN_BLACKLIST_PREFIX = "token_blacklist:"
 
 # OAuth setup
 oauth = OAuth()
@@ -93,3 +99,97 @@ def create_token_pair(user_id: str, email: str, is_admin: bool = False) -> Dict[
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
+
+
+# =============================================================================
+# TOKEN BLACKLIST FUNCTIONS (NEW)
+# =============================================================================
+
+def get_token_jti(token: str) -> Optional[str]:
+    """
+    Get a unique identifier for a token.
+    Uses hash of the token since JTI claim isn't present.
+    """
+    import hashlib
+    return hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
+def get_token_remaining_ttl(payload: Dict[str, Any]) -> int:
+    """
+    Calculate remaining TTL for a token based on its expiration.
+    Returns TTL in seconds.
+    """
+    exp = payload.get("exp")
+    if not exp:
+        return 0
+    
+    # exp is a Unix timestamp
+    expiration = datetime.utcfromtimestamp(exp)
+    now = datetime.utcnow()
+    
+    remaining = (expiration - now).total_seconds()
+    return max(int(remaining), 0)
+
+
+async def blacklist_token(
+    redis_client: aioredis.Redis,
+    token: str,
+    payload: Dict[str, Any]
+) -> bool:
+    """
+    Add a token to the blacklist.
+    
+    Args:
+        redis_client: Redis client
+        token: The JWT token string
+        payload: Decoded token payload
+        
+    Returns:
+        True if successfully blacklisted
+    """
+    try:
+        token_id = get_token_jti(token)
+        ttl = get_token_remaining_ttl(payload)
+        
+        if ttl <= 0:
+            # Token already expired, no need to blacklist
+            return True
+        
+        key = f"{TOKEN_BLACKLIST_PREFIX}{token_id}"
+        
+        # Store with TTL = remaining token lifetime
+        # Value can be user_id for debugging, or just "1"
+        await redis_client.set(key, payload.get("sub", "1"), ex=ttl)
+        
+        return True
+    except Exception as e:
+        print(f"⚠️ Failed to blacklist token: {e}")
+        return False
+
+
+async def is_token_blacklisted(
+    redis_client: aioredis.Redis,
+    token: str
+) -> bool:
+    """
+    Check if a token is blacklisted.
+    
+    Args:
+        redis_client: Redis client
+        token: The JWT token string
+        
+    Returns:
+        True if token is blacklisted
+    """
+    try:
+        token_id = get_token_jti(token)
+        key = f"{TOKEN_BLACKLIST_PREFIX}{token_id}"
+        
+        result = await redis_client.exists(key)
+        return result > 0
+    except Exception as e:
+        print(f"⚠️ Failed to check token blacklist: {e}")
+        # Fail open or closed? For security, fail closed (treat as blacklisted)
+        # But this could lock out users if Redis is down
+        # Choose based on your requirements:
+        return False  # Fail open - allow access if Redis is down

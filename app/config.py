@@ -90,11 +90,7 @@ class Settings(BaseSettings):
     # Max tokens for conversation history (approximate)
     MEMORY_MAX_TOKENS: int = 2000
     # Use Redis for caching active conversations
-    MEMORY_USE_REDIS_CACHE: bool = True
-    # Redis cache TTL for conversation context (seconds)
-    MEMORY_REDIS_TTL: int = 3600  # 1 hour
-    # Include retrieved docs from previous turns in context
-    MEMORY_INCLUDE_PREVIOUS_DOCS: bool = False
+
     
     # CORS
     CORS_ORIGINS: List[str] 

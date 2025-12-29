@@ -10,6 +10,9 @@ from app.models.user import AuthProvider, User
 from app.api.deps import get_current_user
 from app.config import settings
 import redis.asyncio as aioredis
+from fastapi.security import HTTPBearer , HTTPAuthorizationCredentials
+
+security = HTTPBearer()
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -118,13 +121,39 @@ async def get_current_user_info(
     return current_user
 
 
-@router.post("/logout")
+# In auth.py, update the logout endpoint:
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(
-    current_user: User = Depends(get_current_user),
-    redis: aioredis.Redis = Depends(get_redis)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    redis_client: aioredis.Redis = Depends(get_redis)
 ):
-    """Logout (invalidate token) - in production, add token to blacklist"""
-    # TODO: Add token to Redis blacklist
+    """
+    Logout user by blacklisting their current access token.
+    
+    The token will be blacklisted until it expires.
+    Client should also discard the refresh token.
+    """
+    from app.core.security import decode_token, blacklist_token
+    
+    token = credentials.credentials
+    payload = decode_token(token)
+    
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+    
+    # Blacklist the access token
+    success = await blacklist_token(redis_client, token, payload)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to logout",
+        )
+    
     return {"message": "Successfully logged out"}
 
 

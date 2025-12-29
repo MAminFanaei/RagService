@@ -6,9 +6,8 @@ Orchestrates RAG queries with conversation context.
 """
 
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from sqlalchemy.orm import Session
-import redis.asyncio as aioredis
 
 from app.core.rag_engine import rag_engine
 from app.services.chat_service import ChatService
@@ -24,10 +23,9 @@ class RAGService:
     """
     Business logic for RAG operations.
     
-    Now includes conversation memory integration:
+    Includes conversation memory integration:
     1. Loads conversation history before processing
     2. Passes history to RAG engine
-    3. Updates cache after processing
     """
     
     @staticmethod
@@ -35,8 +33,7 @@ class RAGService:
         db: Session,
         chat_id: str,
         user_id: str,
-        question: str,
-        redis_client: Optional[aioredis.Redis] = None
+        question: str
     ) -> Dict[str, Any]:
         """
         Process a RAG query with conversation memory.
@@ -46,7 +43,6 @@ class RAGService:
             chat_id: Chat session ID
             user_id: User ID
             question: User's question
-            redis_client: Redis client for caching (optional but recommended)
             
         Returns:
             {
@@ -54,7 +50,7 @@ class RAGService:
                 "assistant_message": Message,
                 "processing_time_ms": float,
                 "rag_metadata": dict,
-                "context_info": dict  # NEW: info about conversation context used
+                "context_info": dict
             }
         """
         # Verify chat ownership
@@ -62,11 +58,10 @@ class RAGService:
         if not chat:
             raise ValueError("Chat not found or unauthorized")
         
-        # Start timing
         start_time = time.time()
         
         # =====================================================================
-        # STEP 1: Load Conversation History (NEW)
+        # STEP 1: Load Conversation History
         # =====================================================================
         conversation_history = ""
         context_info = {
@@ -78,18 +73,14 @@ class RAGService:
         
         if settings.ENABLE_CONVERSATION_MEMORY:
             try:
-                # Load conversation context
-                # Note: We don't exclude any messages since current question isn't saved yet
                 context: ConversationContext = await memory_service.get_conversation_context(
                     db=db,
                     chat_id=chat_id,
                     user_id=user_id,
-                    redis_client=redis_client,
                     exclude_last_n=0
                 )
                 
                 if context.has_history:
-                    # Format for answer generation (fuller context)
                     conversation_history = memory_service.format_for_answer_generation(context)
                     
                     context_info.update({
@@ -99,11 +90,12 @@ class RAGService:
                         "turns_in_context": context.turn_count
                     })
                     
-                    print(f"🔵 RAGService: Loaded {len(context.messages)} messages for context") if DEBUG else None
+                    if DEBUG:
+                        print(f"🔵 RAGService: Loaded {len(context.messages)} messages for context")
                 
             except Exception as e:
-                print(f"⚠️ RAGService: Failed to load conversation history: {e}") if DEBUG else None
-                # Continue without history - graceful degradation
+                if DEBUG:
+                    print(f"⚠️ RAGService: Failed to load conversation history: {e}")
         
         # =====================================================================
         # STEP 2: Execute RAG Query with History
@@ -118,8 +110,6 @@ class RAGService:
         # =====================================================================
         # STEP 3: Save Messages to Database
         # =====================================================================
-        
-        # Save user message
         user_message = ChatService.add_message(
             db=db,
             chat_id=chat_id,
@@ -129,7 +119,6 @@ class RAGService:
             metadata=None
         )
         
-        # Prepare assistant message metadata
         assistant_metadata = {
             "enhanced_query": rag_result.get("enhanced_query"),
             "docs_retrieved": len(rag_result.get("retrieved_docs", [])),
@@ -138,14 +127,13 @@ class RAGService:
             "context_messages_used": context_info.get("messages_in_context", 0),
             "retrieved_docs": [
                 {
-                    "content_preview": doc["content"][:500],  # Limit preview size
+                    "content_preview": doc["content"][:500],
                     "metadata": dict(doc["metadata"]) if doc.get("metadata") else {}
                 }
-                for doc in rag_result.get("retrieved_docs", [])[:5]  # Store top 5 only
+                for doc in rag_result.get("retrieved_docs", [])[:5]
             ]
         }
         
-        # Save assistant message
         assistant_message = ChatService.add_message(
             db=db,
             chat_id=chat_id,
@@ -156,25 +144,8 @@ class RAGService:
         )
         
         # =====================================================================
-        # STEP 4: Update Cache (NEW)
+        # STEP 4: Auto-title and Return
         # =====================================================================
-        if settings.ENABLE_CONVERSATION_MEMORY and redis_client:
-            try:
-                await memory_service.update_context_cache(
-                    redis_client=redis_client,
-                    chat_id=chat_id,
-                    new_user_message=question,
-                    new_assistant_message=rag_result.get("answer", ""),
-                    assistant_metadata={"enhanced_query": rag_result.get("enhanced_query")}
-                )
-            except Exception as e:
-                print(f"⚠️ RAGService: Failed to update cache: {e}") if DEBUG else None
-        
-        # =====================================================================
-        # STEP 5: Auto-title and Return
-        # =====================================================================
-        
-        # Auto-update chat title if this is the first message
         if user_message.order_index == 1:
             auto_title = ChatService.auto_generate_title(question)
             ChatService.update_chat_title(db, chat_id, user_id, auto_title)
@@ -184,28 +155,8 @@ class RAGService:
             "assistant_message": assistant_message,
             "processing_time_ms": processing_time,
             "rag_metadata": assistant_metadata,
-            "context_info": context_info  # NEW
+            "context_info": context_info
         }
-    
-    @staticmethod
-    async def clear_conversation_cache(
-        chat_id: str,
-        redis_client: aioredis.Redis
-    ) -> bool:
-        """
-        Clear the conversation cache for a chat.
-        
-        Call this when:
-        - Chat is deleted
-        - User requests to "forget" conversation
-        - Cache needs manual refresh
-        """
-        try:
-            await memory_service.invalidate_cache(redis_client, chat_id)
-            return True
-        except Exception as e:
-            print(f"⚠️ Failed to clear cache: {e}")
-            return False
     
     @staticmethod
     def get_rag_stats() -> Dict[str, Any]:

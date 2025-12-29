@@ -1,6 +1,8 @@
+# app/api/v1/chats.py
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List
+import time
 
 from app.core.database import get_db
 from app.schemas.chat import (
@@ -9,34 +11,30 @@ from app.schemas.chat import (
 )
 from app.services.chat_service import ChatService
 from app.services.rag_service import RAGService
-from app.services.user_service import UserService
 from app.services.rate_limit_service import RateLimitService
 from app.api.deps import get_current_user, get_redis_client
 from app.models.user import User
 from app.config import settings
 import redis.asyncio as aioredis
-import time
+
+
+router = APIRouter(prefix="/chats", tags=["Chats"])
+
 
 def _clean_metadata(metadata):
     """Force metadata to be a clean dict"""
     if metadata is None:
         return None
     
-    # If it's already a dict, return it
     if isinstance(metadata, dict):
         return metadata
     
-    # Try to convert to dict
     try:
         import json
-        # Test if it's serializable
         json.dumps(metadata)
         return metadata
     except:
-        # Return empty dict if can't serialize
         return {}
-    
-router = APIRouter(prefix="/chats", tags=["Chats"])
 
 
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_201_CREATED)
@@ -95,7 +93,6 @@ async def get_chat(
     
     messages = ChatService.get_messages(db, chat_id)
     
-    # CLEAN METADATA BEFORE RETURNING
     cleaned_messages = []
     for msg in messages:
         msg_dict = {
@@ -104,7 +101,7 @@ async def get_chat(
             "role": msg.role.value if hasattr(msg.role, 'value') else msg.role,
             "content": msg.content,
             "order_index": msg.order_index,
-            "metadata": _clean_metadata(msg.metadata),  # Clean here!
+            "metadata": _clean_metadata(msg.metadata),
             "created_at": msg.created_at
         }
         cleaned_messages.append(msg_dict)
@@ -120,26 +117,6 @@ async def get_chat(
         "last_message_at": cleaned_messages[-1]["created_at"] if cleaned_messages else None,
         "messages": cleaned_messages
     }
-
-
-def _clean_metadata(metadata):
-    """Force metadata to be a clean dict"""
-    if metadata is None:
-        return None
-    
-    # If it's already a dict, return it
-    if isinstance(metadata, dict):
-        return metadata
-    
-    # Try to convert to dict
-    try:
-        import json
-        # Test if it's serializable
-        json.dumps(metadata)
-        return metadata
-    except:
-        # Return empty dict if can't serialize
-        return {}
 
 
 @router.patch("/{chat_id}", response_model=ChatResponse)
@@ -228,7 +205,7 @@ async def send_message(
     message: MessageCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis_client)
+    redis: aioredis.Redis = Depends(get_redis_client)  # Still needed for rate limiting
 ):
     """Send a message and get RAG response"""
     
@@ -246,7 +223,7 @@ async def send_message(
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded. Try again in a minute."
+            detail="Rate limit exceeded. Try again in a minute."
         )
     
     # Check daily quota
@@ -262,14 +239,14 @@ async def send_message(
             detail=f"Daily message quota ({quota_per_day}) exceeded. Resets at midnight."
         )
     
-    # Process RAG query
+    # Process RAG query (no redis_client needed anymore)
     start_time = time.time()
     result = await RAGService.process_query(
         db=db,
         chat_id=chat_id,
         user_id=current_user.id,
-        question=message.content,
-        redis_client=redis  # <-- NEW: Pass redis for memory
+        question=message.content
+        # redis_client removed - no longer needed
     )
     processing_time = (time.time() - start_time) * 1000
     
@@ -281,25 +258,19 @@ async def send_message(
         "processing_time_ms": processing_time
     }
 
-# Add this endpoint to app/api/v1/chats.py
 
 @router.get("/{chat_id}/memory")
 async def get_chat_memory(
     chat_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis_client)
+    db: Session = Depends(get_db)
+    # redis dependency removed - no longer needed
 ):
     """
     [ADMIN ONLY] Get conversation memory for a chat.
     
     Shows exactly what context the RAG engine receives when processing queries.
     Useful for debugging and monitoring memory functionality.
-    
-    Returns:
-    - Messages currently in memory
-    - Redis cache status
-    - Formatted context strings sent to LLM
     """
     # ==========================================
     # ADMIN CHECK
@@ -313,7 +284,6 @@ async def get_chat_memory(
     # ==========================================
     # VERIFY CHAT EXISTS
     # ==========================================
-    # Admin can view any chat, so we use admin method
     chat = ChatService.get_chat_admin(db, chat_id)
     if not chat:
         raise HTTPException(
@@ -336,14 +306,14 @@ async def get_chat_memory(
         }
     
     # ==========================================
-    # LOAD MEMORY CONTEXT
+    # LOAD MEMORY CONTEXT (no redis needed)
     # ==========================================
     try:
         context = await memory_service.get_conversation_context(
             db=db,
             chat_id=chat_id,
-            user_id=chat.user_id,  # Use chat's owner, not current admin
-            redis_client=redis
+            user_id=chat.user_id
+            # redis_client removed
         )
     except Exception as e:
         return {
@@ -353,34 +323,11 @@ async def get_chat_memory(
         }
     
     # ==========================================
-    # CHECK REDIS CACHE STATUS
-    # ==========================================
-    redis_status = {
-        "enabled": settings.MEMORY_USE_REDIS_CACHE,
-        "cached": False,
-        "ttl_seconds": None
-    }
-    
-    if settings.MEMORY_USE_REDIS_CACHE:
-        try:
-            cache_key = f"conv_memory:{chat_id}"
-            cached_data = await redis.get(cache_key)
-            ttl = await redis.ttl(cache_key)
-            redis_status["cached"] = cached_data is not None
-            redis_status["ttl_seconds"] = ttl if ttl > 0 else None
-        except Exception:
-            redis_status["error"] = "Failed to check Redis"
-    
-    # ==========================================
     # FORMAT CONTEXT (What LLM Actually Receives)
     # ==========================================
-    formatted = {
-        "for_query_enhancement": None,
-        "for_answer_generation": None
-    }
-    
+    formatted_for_answer = None
     if context.has_history:
-        formatted["for_answer_generation"] = memory_service.format_for_answer_generation(context)
+        formatted_for_answer = memory_service.format_for_answer_generation(context)
     
     # ==========================================
     # BUILD RESPONSE
@@ -408,24 +355,17 @@ async def get_chat_memory(
             for msg in context.messages
         ],
         
-        "redis_cache": redis_status,
-        
         "formatted_context": {
-            "query_enhancement": {
-                "content": formatted["for_query_enhancement"],
-                "char_count": len(formatted["for_query_enhancement"]) if formatted["for_query_enhancement"] else 0
-            },
             "answer_generation": {
-                "content": formatted["for_answer_generation"],
-                "char_count": len(formatted["for_answer_generation"]) if formatted["for_answer_generation"] else 0
+                "content": formatted_for_answer,
+                "estimated_tokens": len(formatted_for_answer) // 4 if formatted_for_answer else 0
             }
         },
         
         "settings": {
             "ENABLE_CONVERSATION_MEMORY": settings.ENABLE_CONVERSATION_MEMORY,
             "MEMORY_MAX_MESSAGES": settings.MEMORY_MAX_MESSAGES,
-            "MEMORY_MAX_TOKENS": settings.MEMORY_MAX_TOKENS,
-            "MEMORY_USE_REDIS_CACHE": settings.MEMORY_USE_REDIS_CACHE,
-            "MEMORY_REDIS_TTL": settings.MEMORY_REDIS_TTL
+            "MEMORY_MAX_TOKENS": settings.MEMORY_MAX_TOKENS
+            # Removed cache settings
         }
     }
