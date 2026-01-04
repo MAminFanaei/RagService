@@ -38,7 +38,6 @@ class State(TypedDict):
     
     # Output
     answer: str
-    full_response: object
 
 
 class Retriever:
@@ -288,10 +287,10 @@ class RAGEngine:
                     contents=f"<user_query>{question}</user_query>",
                 )
                 print("🟢 Answer generated") if DEBUG_MOD else None
-                return {"answer": response.text, "full_response": response}
+                return {"answer": response.text}
             
             print("🟡 Test answer generated") if DEBUG_MOD else None
-            return {"answer": test_message_collection.test_message_2, "full_response": None}
+            return {"answer": test_message_collection.test_message_2}
         
         # Build graph
         graph_builder = StateGraph(State)

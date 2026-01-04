@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.database import get_db
 from app.schemas.admin import (
@@ -39,7 +39,7 @@ async def get_system_stats(
     total_messages = db.query(func.count(Message.id)).scalar()
     
     # Messages today
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     messages_today = db.query(func.count(Message.id)).filter(
         Message.created_at >= today_start
     ).scalar()

@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, desc
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from app.models.chat import ChatSession
 from app.models.message import Message, MessageRole
@@ -111,7 +111,7 @@ class ChatService:
             "total": total,
             "chats": result_chats,
             "skip": skip,
-            "limit": limit
+            "limit": limit # limit value inserted from query
         }
     
     @staticmethod
@@ -122,7 +122,7 @@ class ChatService:
             return None
         
         chat.title = new_title
-        chat.updated_at = datetime.utcnow()
+        chat.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(chat)
         return chat
@@ -135,7 +135,7 @@ class ChatService:
             return False
         
         chat.is_deleted = True
-        chat.deleted_at = datetime.utcnow()
+        chat.deleted_at = datetime.now(timezone.utc)
         db.commit()
         return True
     
@@ -173,13 +173,16 @@ class ChatService:
         
         order_index = (max_order or 0) + 1
         
+        # Clean metadata before saving
+        cleaned_metadata = ChatService._clean_metadata(metadata)
+        
         message = Message(
             chat_session_id=chat_id,
             role=role,
             content=content,
-            usage = usage,
+            usage=usage,
             order_index=order_index,
-            metadata=metadata
+            meta_data=cleaned_metadata 
         )
         
         db.add(message)
@@ -187,7 +190,7 @@ class ChatService:
         # Update chat's updated_at
         chat = db.query(ChatSession).filter(ChatSession.id == chat_id).first()
         if chat:
-            chat.updated_at = datetime.utcnow()
+            chat.updated_at = datetime.now(timezone.utc)
         
         db.commit()
         db.refresh(message)
@@ -236,7 +239,7 @@ class ChatService:
                     "role": msg.role.value,
                     "content": msg.content,
                     "usage": msg.usage ,
-                    "metadata": msg.metadata,
+                    "metadata": msg.meta_data,
                     "created_at": msg.created_at.isoformat()
                 }
                 for msg in messages

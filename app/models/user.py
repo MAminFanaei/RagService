@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Boolean, Integer, DateTime, Enum
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import uuid
 import enum
 
@@ -13,6 +13,8 @@ class AuthProvider(str, enum.Enum):
     GOOGLE = "google"
     GITHUB = "github"
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 class User(Base):
     __tablename__ = "users"
@@ -42,9 +44,9 @@ class User(Base):
     rate_limit_per_minute = Column(Integer, nullable=True)  # NULL = use default
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    last_login_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
     chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")

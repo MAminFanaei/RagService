@@ -9,15 +9,16 @@ from app.services.user_service import UserService
 from app.models.user import AuthProvider, User
 from app.api.deps import get_current_user
 from app.config import settings
+from app.core.feature_flags import require_feature
 import redis.asyncio as aioredis
 from fastapi.security import HTTPBearer , HTTPAuthorizationCredentials
-
 security = HTTPBearer()
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+@require_feature(flag_name="ENABLE_REGISTRATION",disabled_message="Regesteration is disabled")  # ← Add this line
 async def register(
     request: Request,
     user_data: UserCreate,
@@ -160,6 +161,7 @@ async def logout(
 # ==================== GOOGLE OAUTH ====================
 
 @router.get("/google/login")
+@require_feature("ENABLE_OAUTH_LOGIN", disabled_message="OAuth login is disabled")
 async def google_login(request: Request):
     """Initiate Google OAuth flow"""
     if not settings.GOOGLE_CLIENT_ID:
@@ -173,6 +175,7 @@ async def google_login(request: Request):
 
 
 @router.get("/google/callback", response_model=OAuthCallbackResponse)
+@require_feature("ENABLE_OAUTH_LOGIN", disabled_message="OAuth login is disabled")
 async def google_callback(
     request: Request,
     db: Session = Depends(get_db)
@@ -251,6 +254,7 @@ async def google_callback(
 # ==================== GITHUB OAUTH ====================
 
 @router.get("/github/login")
+@require_feature("ENABLE_OAUTH_LOGIN", disabled_message="OAuth login is disabled")
 async def github_login(request: Request):
     """Initiate GitHub OAuth flow"""
     if not settings.GITHUB_CLIENT_ID:
@@ -264,6 +268,7 @@ async def github_login(request: Request):
 
 
 @router.get("/github/callback", response_model=OAuthCallbackResponse)
+@require_feature("ENABLE_OAUTH_LOGIN", disabled_message="OAuth login is disabled")
 async def github_callback(
     request: Request,
     db: Session = Depends(get_db)

@@ -8,7 +8,7 @@ Loads directly from MySQL - no Redis caching.
 
 from typing import List, Dict, Optional
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func

@@ -1,10 +1,12 @@
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from app.core.database import Base
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
@@ -17,11 +19,11 @@ class ChatSession(Base):
     
     # Soft delete (chats are never hard deleted)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
-    deleted_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="chat_sessions")

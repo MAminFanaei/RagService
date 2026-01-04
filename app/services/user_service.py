@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.user import User, AuthProvider
 from app.models.chat import ChatSession
@@ -90,7 +90,7 @@ class UserService:
             return None
         
         # Update last login
-        user.last_login_at = datetime.utcnow()
+        user.last_login_at = datetime.now(timezone.utc)
         db.commit()
         
         return user
@@ -100,7 +100,7 @@ class UserService:
         """Update user's last login timestamp"""
         user = UserService.get_by_id(db, user_id)
         if user:
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = datetime.now(timezone.utc)
             db.commit()
     
     @staticmethod
@@ -123,7 +123,7 @@ class UserService:
         ).scalar()
         
         # Messages today
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         messages_today = db.query(func.count(Message.id)).join(
             ChatSession
         ).filter(
@@ -140,7 +140,7 @@ class UserService:
     @staticmethod
     def check_message_quota(db: Session, user_id: str, max_messages: int) -> bool:
         """Check if user has exceeded daily message quota"""
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         
         messages_today = db.query(func.count(Message.id)).join(
             ChatSession

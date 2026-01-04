@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
     
+    ENABLE_REGISTRATION: bool = True
+    ENABLE_OAUTH_LOGIN: bool = True
+
     @property
     def elasticsearch_url(self) -> str:
         return f"{self.ELASTICSEARCH_SCHEME}://{self.ELASTICSEARCH_HOST}:{self.ELASTICSEARCH_PORT}"

@@ -113,7 +113,6 @@ async def health_check():
         "environment": settings.ENVIRONMENT,
         "rag_engine": {
             "status": rag_stats.get("status", "unknown"),
-            "documents": rag_stats.get("documents_count", 0)
         }
     }
 

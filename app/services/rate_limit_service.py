@@ -1,6 +1,6 @@
 from typing import Optional
 import redis.asyncio as aioredis
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from app.config import settings
 
@@ -21,7 +21,7 @@ class RateLimitService:
         Returns:
             (allowed: bool, remaining: int)
         """
-        key = f"{key_prefix}:{user_id}:{datetime.utcnow().strftime('%Y%m%d%H%M')}"
+        key = f"{key_prefix}:{user_id}:{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}"
         
         try:
             # Increment counter
@@ -52,7 +52,7 @@ class RateLimitService:
         Returns:
             (allowed: bool, remaining: int)
         """
-        key = f"daily_quota:{user_id}:{datetime.utcnow().strftime('%Y%m%d')}"
+        key = f"daily_quota:{user_id}:{datetime.now(timezone.utc).strftime('%Y%m%d')}"
         
         try:
             # Increment counter
@@ -78,7 +78,7 @@ class RateLimitService:
         Returns:
             (rate_per_minute, quota_per_day)
         """
-        rate_per_minute = user.rate_limit_per_minute or settings.DEFAULT_RATE_LIMIT_PER_MINUTE
-        quota_per_day = user.max_messages_per_day or settings.DEFAULT_MAX_MESSAGES_PER_DAY
+        rate_per_minute = user.rate_limit_per_minute or None
+        quota_per_day = user.max_messages_per_day or None
         
         return rate_per_minute, quota_per_day
