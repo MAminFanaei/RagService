@@ -130,3 +130,4 @@ class RAGQueryResponse(BaseModel):
     user_message: MessageResponse
     assistant_message: MessageResponse
     processing_time_ms: float
+    quota_remaining: int 

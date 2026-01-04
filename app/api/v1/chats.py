@@ -185,36 +185,39 @@ async def send_message(
 ):
     """Send a message and get RAG response"""
     
-    rate_per_min, quota_per_day = RateLimitService.get_user_limits(current_user)
-    
-    # ─────────────────────────────────────────────────────────
-    # CHECK limits (no increment)
-    # ─────────────────────────────────────────────────────────
-    
-    allowed, remaining = await RateLimitService.check_rate_limit(
-        redis=redis,
-        user_id=current_user.id,
-        limit_per_minute=rate_per_min,
-        key_prefix="rag_query"
-    )
-    
-    if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="More than allowed messages were sent in a single minute. Please try again after a while."
+    if current_user.is_admin : # only check ratelimit when user is not a admin
+        quota_allowed, quota_remaining , allowed = True , 9999, True
+    else :
+        rate_per_min, quota_per_day = RateLimitService.get_user_limits(current_user)
+        
+        # ─────────────────────────────────────────────────────────
+        # CHECK limits (no increment)
+        # ─────────────────────────────────────────────────────────
+        quota_allowed, quota_remaining = await RateLimitService.check_daily_quota(
+            redis=redis,
+            user_id=current_user.id,
+            max_per_day=quota_per_day
         )
-    
-    quota_allowed, quota_remaining = await RateLimitService.check_daily_quota(
-        redis=redis,
-        user_id=current_user.id,
-        max_per_day=quota_per_day
-    )
-    
-    if not quota_allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Daily message quota exceeded. Will reset at midnight."
+        
+        
+        allowed = await RateLimitService.check_per_min_rate_limit(
+            redis=redis,
+            user_id=current_user.id,
+            limit_per_minute=rate_per_min,
+            key_prefix="rag_query"
         )
+        
+        if not quota_allowed :
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Daily message quota exceeded. Will reset at midnight."
+            )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="More than allowed messages were sent in a single minute. Please try again after a while."
+            )
+    
     
     # ─────────────────────────────────────────────────────────
     # PROCESS (might fail)
@@ -231,7 +234,6 @@ async def send_message(
         processing_time = (time.time() - start_time) * 1000
         
     except Exception as e:
-        # ❌ Failed - don't increment quota
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process message. Please try again."
@@ -256,13 +258,11 @@ async def send_message(
     # RETURN response
     # ─────────────────────────────────────────────────────────
     
-    is_admin = current_user.is_admin
-    
     return {
         "message_id": result["assistant_message"].id,
         "chat_id": chat_id,
-        "user_message": result["user_message"].to_response_dict(include_metadata=is_admin),
-        "assistant_message": result["assistant_message"].to_response_dict(include_metadata=is_admin),
+        "user_message": result["user_message"].to_response_dict(include_metadata=current_user.is_admin),
+        "assistant_message": result["assistant_message"].to_response_dict(include_metadata=current_user.is_admin),
         "processing_time_ms": processing_time,
         "quota_remaining": quota_remaining - 1  # Optional: show remaining
     }

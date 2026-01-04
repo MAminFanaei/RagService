@@ -22,7 +22,7 @@ class RateLimitService:
     # ─────────────────────────────────────────────────────────
     
     @staticmethod
-    async def check_rate_limit(
+    async def check_per_min_rate_limit(
         redis: aioredis.Redis,
         user_id: str,
         limit_per_minute: int,
@@ -40,14 +40,13 @@ class RateLimitService:
             current = await redis.get(key)
             count = int(current) if current else 0
             
-            remaining = max(0, limit_per_minute - count)
             allowed = count < limit_per_minute  # < not <= (we haven't incremented yet)
             
-            return allowed, remaining
+            return allowed
             
         except Exception as e:
             print(f"Rate limit check failed: {e}")
-            return True, limit_per_minute
+            return True
     
     @staticmethod
     async def check_daily_quota(
