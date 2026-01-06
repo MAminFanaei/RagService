@@ -1,9 +1,11 @@
 # app/api/v1/chats.py
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query , Request
 from sqlalchemy.orm import Session
 import time
 
+import structlog
 from app.core.database import get_db
+from app.exceptions import ForbiddenException, InternalException, NotFoundException, RateLimitException , AppException
 from app.schemas.chat import (
     ChatCreate, ChatUpdate, ChatResponse, ChatWithMessages,
     ChatListResponse, MessageCreate, RAGQueryResponse
@@ -17,6 +19,7 @@ from app.config import settings
 import redis.asyncio as aioredis
 
 router = APIRouter(prefix="/chats", tags=["Chats"])
+logger = structlog.get_logger()
 
 # _clean_metadata() removed - no longer needed!
 
@@ -69,10 +72,7 @@ async def get_chat(
     """Get a specific chat with all messages"""
     chat = ChatService.get_chat(db, chat_id, current_user.id)
     if not chat:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat not found"
-        )
+        raise NotFoundException("Chat not found")
     
     messages = ChatService.get_messages(db, chat_id)
     
@@ -111,10 +111,8 @@ async def update_chat(
     )
     
     if not chat:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat not found"
-        )
+        raise NotFoundException("Chat not found")
+
     
     messages = ChatService.get_messages(db, chat_id, limit=1)
     
@@ -139,10 +137,8 @@ async def delete_chat(
     """Soft delete a chat (can be restored)"""
     success = ChatService.soft_delete_chat(db, chat_id, current_user.id)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat not found"
-        )
+        raise NotFoundException("Chat not found")
+    
     return "Chat successfully Deleted"
 
 
@@ -155,10 +151,8 @@ async def restore_chat(
     """Restore a soft-deleted chat"""
     success = ChatService.restore_chat(db, chat_id, current_user.id)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat not found or not deleted"
-        )
+        raise NotFoundException("Chat not found or not deleted")
+
     
     chat = ChatService.get_chat(db, chat_id, current_user.id)
     messages = ChatService.get_messages(db, chat_id, limit=1)
@@ -179,6 +173,7 @@ async def restore_chat(
 async def send_message(
     chat_id: str,
     message: MessageCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis_client)
@@ -208,15 +203,11 @@ async def send_message(
         )
         
         if not quota_allowed :
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Daily message quota exceeded. Will reset at midnight."
-            )
+            raise RateLimitException("Daily message quota exceeded. Will reset at midnight.")
+
         if not allowed:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="More than allowed messages were sent in a single minute. Please try again after a while."
-            )
+            raise RateLimitException("More than allowed messages were sent in a single minute. Please try again after a while.")
+
     
     
     # ─────────────────────────────────────────────────────────
@@ -229,15 +220,17 @@ async def send_message(
             db=db,
             chat_id=chat_id,
             user_id=current_user.id,
-            question=message.content
+            question=message.content,
+            rag_engine=request.app.state.rag_engine
         )
         processing_time = (time.time() - start_time) * 1000
         
+    except AppException:
+        raise     #Re-raise our custom exceptions (global handler catches them)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process message. Please try again."
-        )
+        # Unknown errors become 500
+        logger.error("RAG query failed", error=str(e))
+        raise InternalException("Failed to process message")
     
     # ─────────────────────────────────────────────────────────
     # SUCCESS - now increment counters
@@ -276,17 +269,11 @@ async def get_chat_memory(
 ):
     """[ADMIN ONLY] Get conversation memory for a chat."""
     if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
+        raise ForbiddenException("Admin access required")
     
     chat = ChatService.get_chat_admin(db, chat_id)
     if not chat:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat not found"
-        )
+        raise NotFoundException("Chat not found")
     
     from app.services.memory_service import memory_service
     

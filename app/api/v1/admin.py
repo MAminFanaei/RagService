@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.core.database import get_db
+from app.exceptions import NotFoundException
 from app.schemas.admin import (
     AdminUserUpdate, UserStatsResponse, SystemStatsResponse,
     RAGStatsResponse, ConversationExport
@@ -109,10 +110,10 @@ async def list_all_users(
             "total_chats": stats.get("total_chats", 0),
             "total_messages": stats.get("total_messages", 0),
             "messages_today": stats.get("messages_today", 0),
-            "max_messages_per_day": user.max_messages_per_day,
+            "max_messages_per_day": user.max_messages_per_day ,
             "rate_limit_per_minute": user.rate_limit_per_minute
         })
-    
+
     return users_with_stats
 
 
@@ -125,10 +126,8 @@ async def get_user_details(
     """Get detailed user information"""
     user = UserService.get_by_id(db, user_id)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise NotFoundException("User not found")
+
     
     stats = UserService.get_user_stats(db, user_id)
     
@@ -159,10 +158,7 @@ async def update_user_settings(
     """Update user settings (admin only)"""
     user = UserService.get_by_id(db, user_id)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise NotFoundException("User not found")
     
     # Apply updates
     if updates.is_active is not None:
@@ -205,10 +201,7 @@ async def export_user_conversations(
     """Export all conversations for a user (including deleted)"""
     user = UserService.get_by_id(db, user_id)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise NotFoundException("User not found")
     
     # Get all chats (including deleted)
     chats = db.query(ChatSession).filter(
@@ -233,9 +226,6 @@ async def export_conversation(
     """Export a specific conversation"""
     conversation = ChatService.export_conversation(db, chat_id)
     if not conversation:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Conversation not found"
-        )
+        raise NotFoundException("Conversation not found")
     
     return conversation

@@ -16,6 +16,8 @@ from sqlalchemy import desc, func
 from app.models.message import Message
 from app.models.chat import ChatSession
 from app.config import settings
+import structlog
+logger = structlog.get_logger()
 
 
 DEBUG = settings.DEBUG
@@ -127,7 +129,7 @@ class ConversationMemoryService:
         )
         
         if DEBUG:
-            print(f"🔵 Memory: Loaded {len(context.messages)} messages for chat {chat_id[:8]}")
+            logger.info(f"🔵 Memory: Loaded {len(context.messages)} messages for chat {chat_id[:8]}")
         
         return context
 

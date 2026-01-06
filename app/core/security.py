@@ -5,6 +5,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from authlib.integrations.starlette_client import OAuth
 import redis.asyncio as aioredis
+import structlog
 
 from app.config import settings
 
@@ -14,6 +15,8 @@ pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 # Token blacklist settings
 TOKEN_BLACKLIST_PREFIX = "token_blacklist:"
 
+
+logger = structlog.get_logger()
 # OAuth setup
 oauth = OAuth()
 
@@ -163,7 +166,7 @@ async def blacklist_token(
         
         return True
     except Exception as e:
-        print(f"⚠️ Failed to blacklist token: {e}")
+        logger.warning("Failed to blacklist token", error=str(e))
         return False
 
 
@@ -188,8 +191,5 @@ async def is_token_blacklisted(
         result = await redis_client.exists(key)
         return result > 0
     except Exception as e:
-        print(f"⚠️ Failed to check token blacklist: {e}")
-        # Fail open or closed? For security, fail closed (treat as blacklisted)
-        # But this could lock out users if Redis is down
-        # Choose based on your requirements:
-        return False  # Fail open - allow access if Redis is down
+        logger.warning("Failed to check token blacklist", error=str(e))
+        return False  # Fail open

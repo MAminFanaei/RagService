@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "RAG Service"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    DB_ECHO : bool = False
     ENVIRONMENT: str = "production"
     INDEX_THE_DOCS : bool = True
     LLM_TURNED_ON : bool = True
@@ -91,6 +92,10 @@ class Settings(BaseSettings):
     MEMORY_MAX_TOKENS: int = 2000
     # Use Redis for caching active conversations
 
+    # TIMEOUT SETTINGS
+    LLM_TIMEOUT_SECONDS: int = 100
+    RETRIEVAL_TIMEOUT_SECONDS: int = 30
+    TOTAL_QUERY_TIMEOUT_SECONDS: int = 120
     
     # CORS
     CORS_ORIGINS: List[str] 

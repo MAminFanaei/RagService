@@ -8,14 +8,16 @@ Orchestrates RAG queries with conversation context.
 import time
 from typing import Dict, Any
 from sqlalchemy.orm import Session
+import structlog
 
-from app.core.rag_engine import rag_engine
+from fastapi import Request # import rag_engin from main.py
+from app.exceptions import BadRequestException
 from app.services.chat_service import ChatService
 from app.services.memory_service import memory_service, ConversationContext
 from app.models.message import MessageRole
 from app.config import settings
 
-
+logger = structlog.get_logger()
 DEBUG = settings.DEBUG
 
 
@@ -33,7 +35,8 @@ class RAGService:
         db: Session,
         chat_id: str,
         user_id: str,
-        question: str
+        question: str,
+        rag_engine
     ) -> Dict[str, Any]:
         """
         Process a RAG query with conversation memory.
@@ -56,7 +59,7 @@ class RAGService:
         # Verify chat ownership
         chat = ChatService.get_chat(db, chat_id, user_id)
         if not chat:
-            raise ValueError("Chat not found or unauthorized")
+            raise BadRequestException("Chat not found or unauthorized")
         
         start_time = time.time()
         
@@ -91,11 +94,11 @@ class RAGService:
                     })
                     
                     if DEBUG:
-                        print(f"🔵 RAGService: Loaded {len(context.messages)} messages for context")
+                        logger.info(f" RAGService: Loaded {len(context.messages)} messages for context")
                 
             except Exception as e:
                 if DEBUG:
-                    print(f"⚠️ RAGService: Failed to load conversation history: {e}")
+                    logger.info(f"⚠️ RAGService: Failed to load conversation history: {e}")
         
         # =====================================================================
         # STEP 2: Execute RAG Query with History
@@ -162,11 +165,9 @@ class RAGService:
     def get_rag_stats() -> Dict[str, Any]:
         """Get RAG engine statistics"""
         try:
-            stats = rag_engine.get_stats()
+            stats = Request.app.state.rag_engine.get_stats()
             stats["status"] = "healthy"
             return stats
         except Exception as e:
-            return {
-                "status": "error",
-                "error": str(e)
-            }
+            logger.error("Failed to get RAG stats", error=str(e))
+            return {"status": "error", "error": str(e)}

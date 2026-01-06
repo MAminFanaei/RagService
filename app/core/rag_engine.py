@@ -1,7 +1,7 @@
 import asyncio
 import os
 from typing import Dict, Any, List, Optional
-import torch
+import structlog
 from langchain_core.documents import Document as LangChainDocument
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
@@ -21,10 +21,10 @@ from google.genai import types
 from app.config import settings
 import app.test_message_collection as test_message_collection
 
+logger = structlog.get_logger()
 # Set environment for tokenizers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 DEBUG_MOD = settings.DEBUG
-
 
 class State(TypedDict):
     """State for LangGraph pipeline"""
@@ -128,7 +128,7 @@ class RAGEngine:
     
     def _init_rag(self):
         """Initialize RAG components"""
-        print("Initializing RAG Engine with Memory Support...")
+        logger.info("Initializing RAG Engine with Memory Support...")
         
         # Initialize embeddings
         self.embeddings = HuggingFaceEmbeddings(
@@ -140,7 +140,7 @@ class RAGEngine:
             },
             encode_kwargs={'normalize_embeddings': True}
         )
-        print("✓ Embedding Model Initialized") if DEBUG_MOD else None
+        logger.info("✓ Embedding Model Initialized")
 
         # Initialize Elasticsearch store
         self.es_store = ElasticsearchStore(
@@ -150,7 +150,7 @@ class RAGEngine:
             es_user=settings.ELASTICSEARCH_USERNAME,
             es_password=settings.ELASTICSEARCH_PASSWORD
         )
-        print("✓ Elasticsearch Initialized") if DEBUG_MOD else None
+        logger.info("✓ Elasticsearch Initialized")
         
         # Load documents
         self.docs = []
@@ -165,17 +165,17 @@ class RAGEngine:
                     metadata=metadata
                 )
                 self.docs.append(doc)
-        print(f"✓ Loaded {len(self.docs)} documents from {docs_path}")
+        logger.info(f"✓ Loaded {len(self.docs)} documents from {docs_path}")
 
         if settings.INDEX_THE_DOCS:
             try:
                 self.es_store.client.indices.delete(index=settings.ELASTICSEARCH_INDEX_NAME)
-                print("Old documents erased")
-            except Exception:
-                pass
+                logger.info("Old documents erased", index=settings.ELASTICSEARCH_INDEX_NAME)
+            except Exception as e:
+                logger.debug("Index delete skipped", error=str(e))
             finally:
                 self.es_store.add_documents(self.docs)
-            print(f"✓ Indexed {len(self.docs)} documents")
+                logger.info(f"✓ Indexed {len(self.docs)} documents")
 
         # Initialize retriever
         self.hybrid_retriever = Retriever(
@@ -186,18 +186,18 @@ class RAGEngine:
             output_k=settings.RETRIEVER_OUTPUT_K,
             use_reranker=settings.USE_RERANKER
         )
-        print("✓ Retriever Initialized") if DEBUG_MOD else None
+        logger.info("✓ Retriever Initialized")
 
         # Initialize LLM client
         self.llm_client = genai.Client(
             api_key=settings.LLM_API_KEY,
             http_options={"base_url": settings.LLM_BASE_URL}
         )
-        print("✓ LLM Client Initialized") if DEBUG_MOD else None
+        logger.info("✓ LLM Client Initialized") if settings.LLM_TURNED_ON else logger.warning("LLM Client Is Disabled")
 
         # Build graph
         self._build_graph()
-        print("✓ RAG Engine with Memory initialized successfully")
+        logger.info("✓ RAG Engine with Memory initialized successfully")
     
     def _build_graph(self):
         """Build the LangGraph workflow with memory support"""
@@ -211,7 +211,7 @@ class RAGEngine:
             - Understand follow-up questions
             - Maintain topic continuity
             """
-            print("🟢 Graph invoked - Enhancing query") if DEBUG_MOD else None
+            logger.info("Graph invoked - Enhancing query") if DEBUG_MOD else None
             
             question = state["question"]
                 # Use standard enhancement
@@ -230,10 +230,10 @@ class RAGEngine:
                     contents=f"<user_query>{question}</user_query>",
                 )
                 enhanced = response.text.strip()
-                print(f"🟢 Query enhanced: ...") if DEBUG_MOD else None
+                logger.info(f"Query enhanced: ...") if DEBUG_MOD else None
                 return {"enhanced_query": enhanced}
             
-            print("🟡 Test query enhanced") if DEBUG_MOD else None
+            logger.warning("Test query enhanced") if DEBUG_MOD else None
             return {"enhanced_query": question}
         
         def retrieve_hybrid(state: State) -> Dict:
@@ -244,7 +244,7 @@ class RAGEngine:
                 query=query,
             )
             
-            print(f"🟢 Retrieved {len(retrieved_docs)} documents") if DEBUG_MOD else None
+            logger.info(f"Retrieved {len(retrieved_docs)} documents") if DEBUG_MOD else None
             return {"docs": retrieved_docs}
         
         def generate_answer(state: State) -> Dict:
@@ -286,10 +286,10 @@ class RAGEngine:
                     ),
                     contents=f"<user_query>{question}</user_query>",
                 )
-                print("🟢 Answer generated") if DEBUG_MOD else None
+                logger.info("Answer generated") if DEBUG_MOD else None
                 return {"answer": response.text}
             
-            print("🟡 Test answer generated") if DEBUG_MOD else None
+            logger.warning("Test answer generated") if DEBUG_MOD else None
             return {"answer": test_message_collection.test_message_2}
         
         # Build graph
@@ -304,7 +304,7 @@ class RAGEngine:
         graph_builder.add_edge("generate", END)
         
         self.graph = graph_builder.compile()
-        print("✓ Graph compiled") if DEBUG_MOD else None
+        logger.info("✓ Graph compiled")
 
     async def query(
         self,
@@ -358,6 +358,7 @@ class RAGEngine:
             "max_history_messages": settings.MEMORY_MAX_MESSAGES
         }
 
+# creates an instance 
+def create_rag_engine():
+    return RAGEngine()
 
-# Singleton instance
-rag_engine = RAGEngine()

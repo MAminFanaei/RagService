@@ -13,7 +13,7 @@ engine = create_engine(
     pool_size=20,
     max_overflow=40,
     pool_recycle=3600,
-    echo=settings.DEBUG
+    echo=settings.DB_ECHO
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -2,8 +2,11 @@ from typing import Optional
 import redis.asyncio as aioredis
 from datetime import datetime, timedelta, timezone
 
+import structlog
+
 from app.config import settings
 
+logger = structlog.get_logger()
 
 class RateLimitService:
     """Rate limiting service using Redis"""
@@ -45,7 +48,7 @@ class RateLimitService:
             return allowed
             
         except Exception as e:
-            print(f"Rate limit check failed: {e}")
+            logger.error(f"Rate limit check failed: {e}")
             return True
     
     @staticmethod
@@ -72,8 +75,8 @@ class RateLimitService:
             return allowed, remaining
             
         except Exception as e:
-            print(f"Daily quota check failed: {e}")
-            return True, max_per_day
+            logger.error("Daily quota check failed, request failed ", error=str(e))
+            return False
     
     # ─────────────────────────────────────────────────────────
     # INCREMENT ONLY (after success)
@@ -102,7 +105,7 @@ class RateLimitService:
             return results[0]
             
         except Exception as e:
-            print(f"Rate limit increment failed: {e}")
+            logger.error("Rate limit increment failed", error=str(e))
             return 0
     
     @staticmethod
@@ -129,7 +132,7 @@ class RateLimitService:
             return results[0]
             
         except Exception as e:
-            print(f"Daily quota increment failed: {e}")
+            logger.warning("Daily quota increment failed", error=str(e))
             return 0
     
     # ─────────────────────────────────────────────────────────
@@ -139,7 +142,9 @@ class RateLimitService:
     @staticmethod
     def get_user_limits(user) -> tuple[int, int]:
         """Get user's rate limits (per minute, per day)."""
-        rate_per_minute = max(user.rate_limit_per_minute, settings.DEFAULT_RATE_LIMIT_PER_MINUTE) if user.rate_limit_per_minute else settings.DEFAULT_RATE_LIMIT_PER_MINUTE
-        quota_per_day = max(user.max_messages_per_day ,settings.DEFAULT_MAX_MESSAGES_PER_DAY )  if user.max_messages_per_day else settings.DEFAULT_MAX_MESSAGES_PER_DAY
+        # rate_per_minute = max(user.rate_limit_per_minute, settings.DEFAULT_RATE_LIMIT_PER_MINUTE) if user.rate_limit_per_minute else settings.DEFAULT_RATE_LIMIT_PER_MINUTE
+        rate_per_minute =  max(user.rate_limit_per_minute or 0, settings.DEFAULT_RATE_LIMIT_PER_MINUTE)
+        # quota_per_day = max(user.max_messages_per_day ,settings.DEFAULT_MAX_MESSAGES_PER_DAY )  if user.max_messages_per_day else settings.DEFAULT_MAX_MESSAGES_PER_DAY
+        quota_per_day =  max(user.max_messages_per_day or 0, settings.DEFAULT_MAX_MESSAGES_PER_DAY)
         
         return rate_per_minute, quota_per_day

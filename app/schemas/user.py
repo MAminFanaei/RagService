@@ -38,18 +38,21 @@ class UserUpdate(BaseModel):
 
 
 class UserResponse(UserBase):
-    id: str
-    auth_provider: AuthProvider
-    is_active: bool
-    is_admin: bool
-    is_verified: bool
+    id: Optional[str] = None
+    auth_provider: Optional[AuthProvider] = None
+    email: Optional[str] = None
+    username: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_admin: bool  # Required - no default
+    is_verified: Optional[bool] = None
     avatar_url: Optional[str] = None
-    created_at: datetime
+    created_at: datetime  # Required - no default
     last_login_at: Optional[datetime] = None
     
     # Rate limiting info
     max_messages_per_day: Optional[int] = None
     rate_limit_per_minute: Optional[int] = None
+    remaining_messages_today: Optional[int] = None
     
     class Config:
         from_attributes = True

@@ -1,10 +1,11 @@
 # app/api/v1/deps.py
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, get_redis
 from app.core.security import decode_token, is_token_blacklisted
+from app.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
 from app.services.user_service import UserService
 from app.models.user import User
 import redis.asyncio as aioredis
@@ -25,47 +26,27 @@ async def get_current_user(
     
     # Check if token is blacklisted (logged out)
     if await is_token_blacklisted(redis_client, token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise UnauthorizedException("Token has been revoked")
     
     # Decode and validate token
     payload = decode_token(token)
     
     if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise UnauthorizedException("Invalid authentication credentials")
     
     if payload.get("type") != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type",
-        )
+        raise UnauthorizedException("Invalid token type")
     
     user_id = payload.get("sub")
     if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
+        raise UnauthorizedException("Invalid token payload")
     
     user = UserService.get_by_id(db, user_id)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
+        raise NotFoundException("User not found")
     
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
-        )
+        raise ForbiddenException("User account is inactive")
     
     return user
 
@@ -75,10 +56,8 @@ async def get_current_admin_user(
 ) -> User:
     """Ensure current user is an admin"""
     if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
+        raise ForbiddenException("Admin access required")
+
     return current_user
 
 

@@ -7,19 +7,33 @@ from slowapi.errors import RateLimitExceeded
 from contextlib import asynccontextmanager
 import structlog
 
+from app.core.rag_engine import create_rag_engine
 from app.config import settings
 from app.core.database import init_db, close_redis
-from app.core.rag_engine import rag_engine
 from app.api.v1 import auth, chats, admin
 from app.middleware.error_handler import setup_exception_handlers
+import structlog
+import logging
+import sys
 
-# Configure structured logging
+logging.basicConfig(
+    format="%(message)s",
+    stream=sys.stdout,
+    level=logging.INFO,
+)
+
 structlog.configure(
     processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
+        structlog.dev.ConsoleRenderer()
     ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
 )
 
 logger = structlog.get_logger()
@@ -33,10 +47,12 @@ async def lifespan(app: FastAPI):
     
     # Initialize database
     init_db()
-    logger.info("Database initialized")
+    logger.info("MySQL initialized")
     
     # Initialize RAG engine (this happens in singleton constructor)
-    logger.info("RAG engine initialized", status=rag_engine.get_stats())
+    
+    app.state.rag_engine = create_rag_engine()
+    logger.info("RAG engine initialized", status=app.state.rag_engine.get_stats())
     
     # Create admin user if not exists
     from app.core.database import SessionLocal
@@ -105,7 +121,7 @@ app.include_router(admin.router, prefix="/api/v1")
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    rag_stats = rag_engine.get_stats()
+    rag_stats = app.state.rag_engine.get_stats()
     
     return {
         "status": "healthy",
@@ -126,13 +142,3 @@ async def root():
         "docs": "/docs" if settings.DEBUG else "disabled",
         "health": "/health"
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG
-    )

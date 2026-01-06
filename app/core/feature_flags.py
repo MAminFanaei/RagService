@@ -5,9 +5,10 @@ Feature flags and kill switches for endpoints.
 
 from functools import wraps
 from typing import Callable, Optional
-from fastapi import HTTPException, status
+from fastapi import status
 
 from app.config import settings
+from app.exceptions import NotImplementedException
 
 
 def require_feature(
@@ -39,10 +40,7 @@ def require_feature(
                 # Try to get custom message from settings
                 message = disabled_message or "This feature is temporarily disabled"
                 
-                raise HTTPException(
-                    status_code=status_code,
-                    detail=message
-                )
+                raise NotImplementedException(message)
             
             return await func(*args, **kwargs)
         
