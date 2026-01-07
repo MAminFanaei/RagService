@@ -129,7 +129,7 @@ class ConversationMemoryService:
         )
         
         if DEBUG:
-            logger.info(f"🔵 Memory: Loaded {len(context.messages)} messages for chat {chat_id[:8]}")
+            logger.info(f" Memory: Loaded {len(context.messages)} messages for chat {chat_id[:8]}")
         
         return context
 

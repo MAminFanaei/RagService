@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db, get_redis
 from app.core.security import create_token_pair, decode_token, oauth
-from app.schemas.user import UserCreate, UserLogin, UserResponse
 from app.schemas.auth import Token, RefreshTokenRequest, OAuthCallbackResponse
 from app.services.user_service import UserService
 from app.models.user import AuthProvider, User
@@ -14,11 +13,20 @@ from app.services.rate_limit_service import RateLimitService
 import redis.asyncio as aioredis
 from fastapi.security import HTTPBearer , HTTPAuthorizationCredentials
 from app.exceptions import BadRequestException, InternalException, NotImplementedException, UnauthorizedException
+from app.schemas.user import (
+    UserCreate, UserLogin, UserResponse,
+    PasswordChangeRequest, EmailChangeRequest, ProfileUpdateRequest,
+    PasswordChangeResponse, EmailChangeResponse, ProfileUpdateResponse
+)
+
 
 security = HTTPBearer()
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# ─────────────────────────────────────────────────────────────
+# REGISTRATION & LOGIN
+# ─────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 @require_feature(flag_name="ENABLE_REGISTRATION",disabled_message="Regesteration is disabled")  # ← Add this line
@@ -102,28 +110,6 @@ async def refresh_token(
     
     return tokens
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(
-    current_user: User = Depends(get_current_user),
-    redis: aioredis.Redis = Depends(get_redis_client)
-):
-    """Get current user information"""
-    
-    rate_per_minute , quota_per_day = RateLimitService.get_user_limits(current_user)
-    _ , remaining = await RateLimitService.check_daily_quota(
-        redis, current_user.id, quota_per_day
-    )
-    
-    return UserResponse(
-        email=current_user.email,
-        username=current_user.username,
-        is_active=current_user.is_active,
-        is_admin=current_user.is_admin,
-        created_at=current_user.created_at,
-        remaining_messages_today=remaining  
-    )
-
-# In auth.py, update the logout endpoint:
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(
@@ -166,8 +152,8 @@ async def google_login(request: Request):
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
+# Update Google callback
 @router.get("/google/callback", response_model=OAuthCallbackResponse)
-@require_feature("ENABLE_OAUTH_LOGIN", disabled_message="OAuth login is disabled")
 async def google_callback(
     request: Request,
     db: Session = Depends(get_db)
@@ -176,59 +162,54 @@ async def google_callback(
     if not settings.GOOGLE_CLIENT_ID:
         raise NotImplementedException("Google OAuth not configured")
     
-    try:
-        token = await oauth.google.authorize_access_token(request)
-        user_info = token.get('userinfo')
-        
-        if not user_info:
-            raise BadRequestException("Failed to get user info from Google")
-        
-        email = user_info.get('email')
-        oauth_id = user_info.get('sub')
-        full_name = user_info.get('name')
-        avatar_url = user_info.get('picture')
-        
-        # Check if user exists
-        user = UserService.get_by_oauth(db, AuthProvider.GOOGLE, oauth_id)
-        
-        if not user:
-            # Check if email already exists with different provider
-            existing_user = UserService.get_by_email(db, email)
-            if existing_user:
-                raise BadRequestException(f"Email already registered ")
-            
-            # Create new user
-            user = UserService.create_oauth_user(
-                db=db,
-                email=email,
-                provider=AuthProvider.GOOGLE,
-                oauth_id=oauth_id,
-                full_name=full_name,
-                avatar_url=avatar_url
-            )
-        else:
-            # Update last login
-            UserService.update_last_login(db, user.id)
-        
-        # Generate tokens
-        tokens = create_token_pair(
-            user_id=user.id,
-            email=user.email,
-            is_admin=user.is_admin
-        )
-        
-        return {
-            **tokens,
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "full_name": user.full_name,
-                "avatar_url": user.avatar_url
-            }
-        }
+    token = await oauth.google.authorize_access_token(request)
+    user_info = token.get('userinfo')
     
-    except Exception as e:
-        raise BadRequestException("OAuth authentication failed")
+    if not user_info:
+        raise BadRequestException("Failed to get user info from Google")
+    
+    email = user_info.get('email')
+    oauth_id = user_info.get('sub')
+    full_name = user_info.get('name')
+    avatar_url = user_info.get('picture')
+    
+    user = UserService.get_by_oauth(db, AuthProvider.GOOGLE, oauth_id)
+    
+    if not user:
+        existing_user = UserService.get_by_email(db, email)
+        if existing_user:
+            raise BadRequestException(
+                f"Email already registered with {existing_user.auth_provider.value}"
+            )
+        
+        # Username auto-generated from name/email
+        user = UserService.create_oauth_user(
+            db=db,
+            email=email,
+            provider=AuthProvider.GOOGLE,
+            oauth_id=oauth_id,
+            full_name=full_name,
+            avatar_url=avatar_url
+        )
+    else:
+        UserService.update_last_login(db, user.id)
+    
+    tokens = create_token_pair(
+        user_id=user.id,
+        email=user.email,
+        is_admin=user.is_admin
+    )
+    
+    return {
+        **tokens,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "username": user.username,  # Now always present
+            "full_name": user.full_name,
+            "avatar_url": user.avatar_url
+        }
+    }
 
 
 # ==================== GITHUB OAUTH ====================
@@ -244,8 +225,9 @@ async def github_login(request: Request):
     return await oauth.github.authorize_redirect(request, redirect_uri)
 
 
+
+# Update GitHub callback
 @router.get("/github/callback", response_model=OAuthCallbackResponse)
-@require_feature("ENABLE_OAUTH_LOGIN", disabled_message="OAuth login is disabled")
 async def github_callback(
     request: Request,
     db: Session = Depends(get_db)
@@ -254,60 +236,158 @@ async def github_callback(
     if not settings.GITHUB_CLIENT_ID:
         raise NotImplementedException("GitHub OAuth not configured")
     
-    try:
-        token = await oauth.github.authorize_access_token(request)
-        
-        # Get user info
-        resp = await oauth.github.get('user', token=token)
-        user_info = resp.json()
-        
-        # Get primary email
-        email_resp = await oauth.github.get('user/emails', token=token)
-        emails = email_resp.json()
-        primary_email = next((e['email'] for e in emails if e['primary']), emails[0]['email'])
-        
-        oauth_id = str(user_info.get('id'))
-        full_name = user_info.get('name')
-        avatar_url = user_info.get('avatar_url')
-        
-        # Check if user exists
-        user = UserService.get_by_oauth(db, AuthProvider.GITHUB, oauth_id)
-        
-        if not user:
-            # Check if email already exists with different provider
-            existing_user = UserService.get_by_email(db, primary_email)
-            if existing_user:
-                raise BadRequestException(f"Email already registered")
-            
-            # Create new user
-            user = UserService.create_oauth_user(
-                db=db,
-                email=primary_email,
-                provider=AuthProvider.GITHUB,
-                oauth_id=oauth_id,
-                full_name=full_name,
-                avatar_url=avatar_url
-            )
-        else:
-            # Update last login
-            UserService.update_last_login(db, user.id)
-        
-        # Generate tokens
-        tokens = create_token_pair(
-            user_id=user.id,
-            email=user.email,
-            is_admin=user.is_admin
-        )
-        
-        return {
-            **tokens,
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "full_name": user.full_name,
-                "avatar_url": user.avatar_url
-            }
-        }
+    token = await oauth.github.authorize_access_token(request)
     
-    except Exception as e:
-        raise BadRequestException("OAuth authentication failed")
+    resp = await oauth.github.get('user', token=token)
+    user_info = resp.json()
+    
+    email_resp = await oauth.github.get('user/emails', token=token)
+    emails = email_resp.json()
+    primary_email = next((e['email'] for e in emails if e['primary']), emails[0]['email'])
+    
+    oauth_id = str(user_info.get('id'))
+    full_name = user_info.get('name')
+    avatar_url = user_info.get('avatar_url')
+    github_username = user_info.get('login')  # GitHub username
+    
+    user = UserService.get_by_oauth(db, AuthProvider.GITHUB, oauth_id)
+    
+    if not user:
+        existing_user = UserService.get_by_email(db, primary_email)
+        if existing_user:
+            raise BadRequestException(
+                f"Email already registered with {existing_user.auth_provider.value}"
+            )
+        
+        # Use GitHub username if available
+        user = UserService.create_oauth_user(
+            db=db,
+            email=primary_email,
+            provider=AuthProvider.GITHUB,
+            oauth_id=oauth_id,
+            full_name=full_name,
+            avatar_url=avatar_url,
+            oauth_username=github_username  # Pass GitHub username
+        )
+    else:
+        UserService.update_last_login(db, user.id)
+    
+    tokens = create_token_pair(
+        user_id=user.id,
+        email=user.email,
+        is_admin=user.is_admin
+    )
+    
+    return {
+        **tokens,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "username": user.username,  # Now always present
+            "full_name": user.full_name,
+            "avatar_url": user.avatar_url
+        }
+    }
+
+# ─────────────────────────────────────────────────────────────
+# CURRENT USER INFO
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+    redis: aioredis.Redis = Depends(get_redis_client)
+):
+    """Get current user information"""
+    
+    rate_per_minute , quota_per_day = RateLimitService.get_user_limits(current_user)
+    _ , remaining = await RateLimitService.check_daily_quota(
+        redis, current_user.id, quota_per_day
+    )
+    
+    return UserResponse(
+        email=current_user.email,
+        username=current_user.username,
+        is_active=current_user.is_active,
+        is_admin=current_user.is_admin,
+        created_at=current_user.created_at,
+        remaining_messages_today=remaining  
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# PROFILE UPDATE ENDPOINTS
+# ─────────────────────────────────────────────────────────────
+
+@router.put("/me/password", response_model=PasswordChangeResponse)
+async def change_password(
+    request: PasswordChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Change current user's password.
+    
+    Requires current password for verification.
+    """
+    # Exceptions are raised by service and handled by middleware
+    UserService.change_password(
+        db=db,
+        user_id=current_user.id,
+        current_password=request.current_password,
+        new_password=request.new_password
+    )
+    
+    return {"message": "Password changed successfully"}
+
+
+@router.put("/me/email", response_model=EmailChangeResponse)
+async def change_email(
+    request: EmailChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Change current user's email.
+    
+    Requires password for verification.
+    After change, user must verify new email.
+    """
+    user = UserService.change_email(
+        db=db,
+        user_id=current_user.id,
+        new_email=request.new_email,
+        password=request.password
+    )
+    
+    return {
+        "message": "Email changed successfully. Please verify your new email.",
+        "new_email": user.email,
+        "is_verified": user.is_verified
+    }
+
+
+@router.patch("/me", response_model=ProfileUpdateResponse)
+async def update_profile(
+    request: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update current user's profile.
+    
+    Can update: username, full_name, avatar_url
+    """
+    user = UserService.update_profile(
+        db=db,
+        user_id=current_user.id,
+        username=request.username,
+        full_name=request.full_name,
+        avatar_url=request.avatar_url
+    )
+    
+    return {
+        "message": "Profile updated successfully",
+        "user": user
+    }
+

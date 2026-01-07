@@ -135,9 +135,15 @@ async def delete_chat(
     db: Session = Depends(get_db)
 ):
     """Soft delete a chat (can be restored)"""
+    chat = ChatService.get_chat(db, chat_id, current_user.id)
+    if not chat:
+        raise NotFoundException("Chat not found ")
+
+    if chat.is_deleted:
+        raise NotFoundException("Chat not found (maybe deleted)")
     success = ChatService.soft_delete_chat(db, chat_id, current_user.id)
     if not success:
-        raise NotFoundException("Chat not found")
+        raise NotFoundException("Operation failed")
     
     return "Chat successfully Deleted"
 
@@ -149,6 +155,8 @@ async def restore_chat(
     db: Session = Depends(get_db)
 ):
     """Restore a soft-deleted chat"""
+    if not current_user.is_admin:
+        raise ForbiddenException("Admin access required")
     success = ChatService.restore_chat(db, chat_id, current_user.id)
     if not success:
         raise NotFoundException("Chat not found or not deleted")

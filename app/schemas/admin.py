@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 
 class AdminUserUpdate(BaseModel):
     """Admin can update user settings"""
-    is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
     max_messages_per_day: Optional[int] = Field(None, ge=0, le=10000)
     rate_limit_per_minute: Optional[int] = Field(None, ge=1, le=1000)
@@ -72,3 +71,23 @@ class ConversationExport(BaseModel):
     messages: List[Dict[str, Any]]
     created_at: datetime
     message_count: int
+
+class UserDisableRequest(BaseModel):
+    reason: Optional[str] = None
+
+class UserDeleteRequest(BaseModel):
+    """Request body for permanent user deletion"""
+    admin_password: str 
+    confirm_username: Optional[str]
+
+class UserDeleteResponse(BaseModel):
+    message: str
+    user_id: str
+    chats_deleted: int
+    messages_deleted: int
+
+
+class UserActionResponse(BaseModel):
+    message: str
+    user_id: str
+    is_active: bool

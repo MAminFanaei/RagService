@@ -51,6 +51,14 @@ class NotFoundException(AppException):
     def __init__(self, message: str = "Resource not found"):
         super().__init__(message)
 
+class ConflictException(AppException):
+    """409 - Resource conflict (e.g., duplicate email)."""
+    status_code = status.HTTP_409_CONFLICT
+    error_code = "CONFLICT"
+    
+    def __init__(self, message: str = "Resource conflict"):
+        super().__init__(message)
+
 
 class RateLimitException(AppException):
     """429 - Rate limit exceeded."""
