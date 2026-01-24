@@ -5,7 +5,7 @@ import time
 
 import structlog
 from app.core.database import get_db
-from app.exceptions import ForbiddenException, InternalException, NotFoundException, RateLimitException , AppException
+from app.exceptions import ForbiddenException, InputTooLongException, InternalException, NotFoundException, RateLimitException , AppException
 from app.schemas.chat import (
     ChatCreate, ChatUpdate, ChatResponse, ChatWithMessages,
     ChatListResponse, MessageCreate, RAGQueryResponse
@@ -187,7 +187,15 @@ async def send_message(
     redis: aioredis.Redis = Depends(get_redis_client)
 ):
     """Send a message and get RAG response"""
+    content_length = len(message.content)
+    max_length = settings.MAX_QUESTION_LENGTH
     
+    if content_length > max_length:
+        raise InputTooLongException(
+            max_length=max_length,
+            actual_length=content_length
+        )
+        
     if current_user.is_admin : # only check ratelimit when user is not a admin
         quota_allowed, quota_remaining , allowed = True , 9999, True
     else :

@@ -105,3 +105,21 @@ class RedisWarning(ServiceWarning):
 class ElasticsearchWarning(ServiceWarning):
     """Elasticsearch operation failed but app continues."""
     pass
+
+# Add this exception:
+
+class InputTooLongException(BadRequestException):
+    """User input exceeds maximum length."""
+    error_code = "INPUT_TOO_LONG"
+    
+    def __init__(
+        self, 
+        message: str = "Input exceeds maximum length",
+        max_length: int = None,
+        actual_length: int = None
+    ):
+        self.max_length = max_length
+        self.actual_length = actual_length
+        if max_length and actual_length:
+            message = f"Input too long: {actual_length} characters (max: {max_length})"
+        super().__init__(message)

@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     # Max tokens for conversation history (approximate)
     MEMORY_MAX_TOKENS: int = 2000
     # Use Redis for caching active conversations
+    MAX_QUESTION_LENGTH: int = 5000  
 
     # TIMEOUT SETTINGS
     LLM_TIMEOUT_SECONDS: int = 100

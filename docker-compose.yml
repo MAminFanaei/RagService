@@ -1,13 +1,16 @@
+# version ??
+
 services:
 
   # app:
-  #   build: 
-  #     context: .
-  #     dockerfile: Dockerfile
+  #   # build: 
+  #   #   context: .
+  #   #   dockerfile: Dockerfile
   #   image: rag_service_app:latest
   #   container_name: rag_service_app
   #   ports:
-  #     - "127.0.0.1:8000:8000"
+  #     - "8000:8000"
+  ##     - "127.0.0.1:8000:8000"
 
   #   environment:
   #     - DATABASE_URL=${DATABASE_URL}
@@ -22,20 +25,20 @@ services:
   #     - /etc/ssl/private/api-key.pem:/app/certs/api-key.pem:ro
   #     - /etc/ssl/certs/api-cert.pem:/app/certs/api-cert.pem:ro
 
-    # command:
-    #   - sh
-    #   - -c
-    #   - >
-    #       alembic upgrade head &&
-    #       exec gunicorn app.main:app
-    #       --worker-class uvicorn.workers.UvicornWorker
-    #       --workers 1
-    #       --bind 0.0.0.0:8000
-    #       --worker-connections 500
-    #       --timeout 30
-    #       --keep-alive 2
-    #       --log-level info
-    #       --access-logfile -
+  #   command:
+  #     - sh
+  #     - -c
+  #     - >
+  #         alembic upgrade head &&
+  #         exec gunicorn app.main:app
+  #         --worker-class uvicorn.workers.UvicornWorker
+  #         --workers 1
+  #         --bind 0.0.0.0:8000
+  #         --worker-connections 500
+  #         --timeout 30
+  #         --keep-alive 2
+  #         --log-level info
+  #         --access-logfile -
 
   #   healthcheck:
   #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -83,6 +86,7 @@ services:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$MYSQL_ROOT_PASSWORD || exit 1"]
       timeout: 20s
       retries: 10
+    restart: unless-stopped
     network_mode: "host"
     # networks:
     #   - rag_network
@@ -97,6 +101,7 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
     network_mode: "host"
+    restart: unless-stopped
     # networks:
     #   - rag_network
 
@@ -122,6 +127,7 @@ services:
       timeout: 10s
       retries: 5
     network_mode: "host"  
+    restart: unless-stopped
     # networks:
     #   - rag_network
 
