@@ -5,4 +5,4 @@ venv/
 *.log
 .DS_Store
 docs/others/
-models/gte-multilingual-base
+models/*

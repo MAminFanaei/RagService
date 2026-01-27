@@ -75,7 +75,7 @@ class Retriever:
             query: The enhanced query
         """
         # Get candidates from both retrievers
-        es_results = self.es_store.similarity_search(query, k=self.output_k * 2)
+        es_results = self.es_store.similarity_search(query, k=self.output_k )
         
         # Use invoke() instead of deprecated get_relevant_documents()
         bm25_results = self.bm25_retriever.invoke(query)
@@ -84,12 +84,11 @@ class Retriever:
         candidates = es_results + bm25_results
         seen = set()
         unique_candidates = []
-        for doc in candidates:
-            # Better deduplication using hash
-            doc_hash = hash(doc.page_content[:200])
-            if doc_hash not in seen:
-                seen.add(doc_hash)
-                unique_candidates.append(doc)
+        for candid in candidates:
+            doc_id = candid.metadata["chunk_id"]
+            if doc_id not in seen:
+                seen.add(doc_id)
+                unique_candidates.append(candid)
         
         if not unique_candidates:
             return []
@@ -152,7 +151,7 @@ class RAGEngine:
         )
         logger.info("✓ Elasticsearch Initialized")
         
-        # Load documents
+        # Load documents for keyword search -- DO NOT DELETE THIS!!!!
         self.docs = []
         docs_path = Path(settings.DOC_PATH)
         for json_file in docs_path.glob("*.json"):
