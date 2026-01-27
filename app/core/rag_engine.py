@@ -1,115 +1,257 @@
+
 import asyncio
 import os
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor
 import structlog
+
 from langchain_core.documents import Document as LangChainDocument
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 from langchain_elasticsearch import ElasticsearchStore
 from langgraph.graph import START, StateGraph, END
-from langchain_core.prompts import PromptTemplate
 from langchain_community.retrievers import BM25Retriever
 from typing import TypedDict
 import json
 from pathlib import Path
-from app.prompts import (
-    QUERY_ENHANCEMENT_PROMPT,
-    ANSWER_GENERATION_PROMPT
-)
+
 from google import genai
 from google.genai import types
+
+from app.exceptions import InternalException
+from app.prompts import QUERY_ENHANCEMENT_PROMPT, ANSWER_GENERATION_PROMPT
 from app.config import settings
 import app.test_message_collection as test_message_collection
 
 logger = structlog.get_logger()
-# Set environment for tokenizers
+
+# Environment setup
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 DEBUG_MOD = settings.DEBUG
 
+# Thread pool for CPU-bound operations
+_executor = ThreadPoolExecutor(max_workers=settings.WORKERS)
+
+
 class State(TypedDict):
     """State for LangGraph pipeline"""
-    # Input
     question: str
-    conversation_history: str  # NEW: Formatted conversation history
-    
-    # Processing
+    conversation_history: str
     enhanced_query: str
     docs: List[LangChainDocument]
-    
-    # Output
     answer: str
 
 
 class Retriever:
-    """Hybrid retriever combining multiple retrieval strategies"""
+    """
+     hybrid retriever with configurable components.
+    
+    - ES: Always enabled (primary)
+    - BM25: Optional (config toggle)
+    - Reranker: Optional, GPU-accelerated (config toggle)
+    """
     
     def __init__(
         self,
-        es_store,
-        documents,
-        embeddings,
-        reranker_model,
-        output_k,
-        use_reranker: bool
+        es_store: ElasticsearchStore,
+        documents: List[LangChainDocument],
+        embeddings: HuggingFaceEmbeddings,
+        reranker_model: str,
+        output_k: int,
+        use_reranker: bool,
+        use_bm25: bool  # NEW parameter
     ):
         self.es_store = es_store
         self.documents = documents
         self.embeddings = embeddings
-        self.reranker_model = reranker_model
-        self.bm25_retriever = BM25Retriever.from_documents(documents)
         self.output_k = output_k
-        self.bm25_retriever.k = output_k * 2
         self.use_reranker = use_reranker
+        self.use_bm25 = use_bm25
         
+        # BM25 - CPU only (sparse retrieval, no GPU version exists)
+        if self.use_bm25:
+            self.bm25_retriever = BM25Retriever.from_documents(documents)
+            self.bm25_retriever.k = output_k * 2
+            logger.info("✓ BM25 enabled")
+        else:
+            self.bm25_retriever = None
+            logger.info("✗ BM25 disabled")
+        
+        # Reranker - GPU accelerated via DEVICE setting
         if self.use_reranker:
-            self.reranker = CrossEncoder(reranker_model)
+            self.reranker = CrossEncoder(
+                reranker_model,
+                device=settings.DEVICE  # "cuda" or "cpu"
+            )
+            logger.info("✓ Reranker enabled", device=settings.DEVICE)
+        else:
+            self.reranker = None
+            logger.info("✗ Reranker disabled")
+        
+        logger.info("Retriever initialized", 
+                    use_bm25=use_bm25,
+                    use_reranker=use_reranker, 
+                    output_k=output_k)
     
-    def retrieve_with_reranking(
-        self,
-        query: str,
-    ) -> List[LangChainDocument]:
+    async def retrieve(self, query: str) -> List[LangChainDocument]:
         """
-        Perform hybrid retrieval with reranking.
-        
-        Args:
-            query: The enhanced query
+        hybrid retrieval with reranking.
         """
-        # Get candidates from both retrievers
-        es_results = self.es_store.similarity_search(query, k=self.output_k )
+        # Always run ES
+        es_task = self._es_search(query, self.output_k * 2)
         
-        # Use invoke() instead of deprecated get_relevant_documents()
-        bm25_results = self.bm25_retriever.invoke(query)
+        # Optionally run BM25
+        if self.use_bm25:
+            bm25_task = self._bm25_search(query)
+            results = await asyncio.gather(es_task, bm25_task, return_exceptions=True)
+            es_results = results[0] if not isinstance(results[0], Exception) else []
+            bm25_results = results[1] if not isinstance(results[1], Exception) else []
+        else:
+            es_results = await es_task
+            if isinstance(es_results, Exception):
+                es_results = []
+            bm25_results = []
         
         # Combine and deduplicate
         candidates = es_results + bm25_results
         seen = set()
         unique_candidates = []
-        for candid in candidates:
-            doc_id = candid.metadata["chunk_id"]
+        
+        for doc in candidates:
+            doc_id = doc.metadata.get("chunk_id")
             if doc_id not in seen:
                 seen.add(doc_id)
-                unique_candidates.append(candid)
+                unique_candidates.append(doc)
         
         if not unique_candidates:
+            logger.warning("No documents retrieved", query=query[:50])
             return []
         
-        if self.use_reranker:
-            pairs = [[query, doc.page_content] for doc in unique_candidates]
+        # Optionally rerank
+        if self.use_reranker and self.reranker:
+            return await self._reranker(query, unique_candidates)
+        
+        return unique_candidates[:self.output_k]
+    
+    async def _es_search(self, query: str, k: int) -> List[LangChainDocument]:
+        """Elasticsearch similarity search."""
+        try:
+            # langchain-elasticsearch supports async
+            results = await asyncio.wait_for(
+                self.es_store.asimilarity_search(query, k=k),
+                timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
+            )
+            return results
+        except asyncio.TimeoutError:
+            logger.warning("ES search timed out", query=query[:50])
+            return []
+        except Exception as e:
+            logger.error("ES search failed", error=str(e))
+            return []
+    
+    async def _bm25_search(self, query: str) -> List[LangChainDocument]:
+        """Run BM25 in executor (CPU-bound)."""
+        loop = asyncio.get_running_loop()
+        try:
+            results = await asyncio.wait_for(
+                loop.run_in_executor(_executor, self.bm25_retriever.invoke, query),
+                timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
+            )
+            return results
+        except asyncio.TimeoutError:
+            logger.warning("BM25 search timed out", query=query[:50])
+            return []
+        except Exception as e:
+            logger.error("BM25 search failed", error=str(e))
+            return []
+    
+    async def _reranker(
+        self,
+        query: str,
+        candidates: List[LangChainDocument]
+    ) -> List[LangChainDocument]:
+        """Rerank documents in executor (CPU-bound)."""
+        if not candidates or not self.use_reranker:
+            return candidates[:self.output_k]
+        
+        loop = asyncio.get_running_loop()
+        
+        def rerank():
+            pairs = [[query, doc.page_content] for doc in candidates]
             scores = self.reranker.predict(pairs)
-            doc_scores = list(zip(unique_candidates, scores))
+            doc_scores = list(zip(candidates, scores))
             doc_scores.sort(key=lambda x: x[1], reverse=True)
             return [doc for doc, _ in doc_scores[:self.output_k]]
-        else:
-            return unique_candidates[:self.output_k]
+        
+        try:
+            results = await asyncio.wait_for(
+                loop.run_in_executor(_executor, rerank),
+                timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
+            )
+            return results
+        except asyncio.TimeoutError:
+            logger.warning("Reranking timed out")
+            return candidates[:self.output_k]
+        except Exception as e:
+            logger.error("Reranking failed", error=str(e))
+            return candidates[:self.output_k]
+    
+
+class LLMClient:
+    """
+    wrapper for Google GenAI.
+    
+    Uses generate_content_async for true async LLM calls.
+    """
+    
+    def __init__(self, api_key: str, base_url: str):
+        self.client = genai.Client(
+            api_key=api_key,
+            http_options={"base_url": base_url}
+        )
+        logger.info("LLMClient initialized")
+    
+    async def generate(
+        self,
+        model: str,
+        system_instruction: str,
+        content: str,
+        temperature: float = 0.2,
+        top_p: float = 0.7
+    ) -> str:
+        """
+        LLM generation with timeout.
+        """
+        try:
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=model,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=temperature,
+                        top_p=top_p
+                    ),
+                    contents=content,
+                ),
+                timeout=settings.LLM_TIMEOUT_SECONDS
+            )
+            return response.text.strip()
+        except asyncio.TimeoutError:
+            logger.error("LLM generation timed out", model=model)
+            raise TimeoutError(f"LLM generation timed out after {settings.LLM_TIMEOUT_SECONDS}s")
+        except Exception as e:
+            logger.error("LLM generation failed", error=str(e), model=model)
+            raise
 
 
 class RAGEngine:
     """
-    Singleton RAG engine with conversation memory support.
-    
-    The engine now accepts conversation history and uses it to:
-    1. Enhance queries with context (resolve pronouns, references)
-    2. Generate answers that maintain conversation coherence
+    Fully async RAG engine with:
+    -  LLM calls via google-genai async API
+    -  Elasticsearch via langchain async methods
+    - CPU-bound operations in thread executor
+    - Configurable timeouts
+    - LangGraph with async nodes
     """
     
     _instance = None
@@ -126,8 +268,8 @@ class RAGEngine:
             RAGEngine._initialized = True
     
     def _init_rag(self):
-        """Initialize RAG components"""
-        logger.info("Initializing RAG Engine with Memory Support...")
+        """Initialize RAG components (sync initialization)."""
+        logger.info("Initializing  RAG Engine...")
         
         # Initialize embeddings
         self.embeddings = HuggingFaceEmbeddings(
@@ -140,7 +282,7 @@ class RAGEngine:
             encode_kwargs={'normalize_embeddings': True}
         )
         logger.info("✓ Embedding Model Initialized")
-
+        
         # Initialize Elasticsearch store
         self.es_store = ElasticsearchStore(
             es_url=settings.elasticsearch_url,
@@ -151,7 +293,7 @@ class RAGEngine:
         )
         logger.info("✓ Elasticsearch Initialized")
         
-        # Load documents for keyword search -- DO NOT DELETE THIS!!!!
+        # Load documents
         self.docs = []
         docs_path = Path(settings.DOC_PATH)
         for json_file in docs_path.glob("*.json"):
@@ -165,7 +307,8 @@ class RAGEngine:
                 )
                 self.docs.append(doc)
         logger.info(f"✓ Loaded {len(self.docs)} documents from {docs_path}")
-
+        
+        # Index documents if needed
         if settings.INDEX_THE_DOCS:
             try:
                 self.es_store.client.indices.delete(index=settings.ELASTICSEARCH_INDEX_NAME)
@@ -175,123 +318,121 @@ class RAGEngine:
             finally:
                 self.es_store.add_documents(self.docs)
                 logger.info(f"✓ Indexed {len(self.docs)} documents")
-
+        
         # Initialize retriever
-        self.hybrid_retriever = Retriever(
+        self.retriever = Retriever(
             es_store=self.es_store,
             documents=self.docs,
             embeddings=self.embeddings,
             reranker_model=settings.RERANKER_MODEL_PATH,
             output_k=settings.RETRIEVER_OUTPUT_K,
-            use_reranker=settings.USE_RERANKER
+            use_reranker=settings.USE_RERANKER,
+            use_bm25=settings.USE_BM25 
         )
+
         logger.info("✓ Retriever Initialized")
-
+        
         # Initialize LLM client
-        self.llm_client = genai.Client(
+        self.llm = LLMClient(
             api_key=settings.LLM_API_KEY,
-            http_options={"base_url": settings.LLM_BASE_URL}
+            base_url=settings.LLM_BASE_URL
         )
-        logger.info("✓ LLM Client Initialized") if settings.LLM_TURNED_ON else logger.warning("LLM Client Is Disabled")
-
+        logger.info("✓ LLMClient Initialized" if settings.LLM_TURNED_ON else "⚠ LLM Client Disabled")
+        
         # Build graph
         self._build_graph()
-        logger.info("✓ RAG Engine with Memory initialized successfully")
+        logger.info("✓  RAG Engine initialized successfully")
     
+
     def _build_graph(self):
-        """Build the LangGraph workflow with memory support"""
+        """Build LangGraph workflow with nodes."""
         
-        def enhance_query(state: State) -> Dict:
-            """
-            Enhance query with conversation context.
-            
-            If conversation history is provided, uses it to:
-            - Resolve pronouns (it, that, this, etc.)
-            - Understand follow-up questions
-            - Maintain topic continuity
-            """
-            logger.info("Graph invoked - Enhancing query") if DEBUG_MOD else None
+        # Store self reference for closures
+        engine = self # such a nerdy move
+
+        # ------------------------------- Graph Nodes ---------------------------------
+        async def enhance_query(state: State) -> Dict:
+            """ query enhancement."""
+            logger.info("Graph: Enhancing query") if DEBUG_MOD else None
             
             question = state["question"]
-                # Use standard enhancement
+            
             instruction = QUERY_ENHANCEMENT_PROMPT.invoke({
                 "maxtoken": settings.ENHANCER_OUTPUT_TOKEN
-                })
+            })
             
-            if settings.LLM_TURNED_ON:
-                response = self.llm_client.models.generate_content(
+            if not settings.LLM_TURNED_ON:
+                logger.warning("Test query enhanced") if DEBUG_MOD else None
+                return {"enhanced_query": question}
+            
+            try:
+                enhanced = await engine.llm.generate(
                     model=settings.QUERY_ENHANCER_MODEL_NAME,
-                    config=types.GenerateContentConfig(
-                        system_instruction=instruction,
-                        temperature=0.2,
-                        top_p=0.7
-                    ),
-                    contents=f"<user_query>{question}</user_query>",
+                    system_instruction=instruction,
+                    content=f"<user_query>{question}</user_query>",
+                    temperature=0.2,
+                    top_p=0.7
                 )
-                enhanced = response.text.strip()
-                logger.info(f"Query enhanced: ...") if DEBUG_MOD else None
+                logger.info("Query enhanced") if DEBUG_MOD else None
                 return {"enhanced_query": enhanced}
+            except Exception as e:
+                logger.error("Query enhancement failed, using original", error=str(e))
+                return {"enhanced_query": question}
             
-            logger.warning("Test query enhanced") if DEBUG_MOD else None
-            return {"enhanced_query": question}
-        
-        def retrieve_hybrid(state: State) -> Dict:
-            """Retrieve documents with optional conversation context."""
+        # ------------------------------- Graph Nodes ---------------------------------
+        async def retrieve_hybrid(state: State) -> Dict:
+            """ hybrid retrieval."""
             query = state.get("enhanced_query", state["question"])
             
-            retrieved_docs = self.hybrid_retriever.retrieve_with_reranking(
-                query=query,
-            )
+            docs = await engine.retriever.retrieve(query)
             
-            logger.info(f"Retrieved {len(retrieved_docs)} documents") if DEBUG_MOD else None
-            return {"docs": retrieved_docs}
+            logger.info(f"Retrieved {len(docs)} documents") if DEBUG_MOD else None
+            return {"docs": docs}
         
-        def generate_answer(state: State) -> Dict:
-            """
-            Generate answer considering conversation history.
-            
-            If history is provided, the LLM will:
-            - Maintain consistency with previous answers
-            - Avoid repeating information
-            - Build on previous context naturally
-            """
-
+        # ------------------------------- Graph Nodes ---------------------------------
+        async def generate_answer(state: State) -> Dict:
+            """ answer generation."""
             question = state["question"]
             
             if state.get("docs"):
-                docs_content = "\n\n---Document Seperator---\n\n".join([
-                doc.page_content for doc in state["docs"]])
-            else :
-                docs_content = "Error - NO Document Retrieved , probebly due to server errors!"
+                docs_content = "\n\n---Document Separator---\n\n".join([
+                    doc.page_content for doc in state["docs"]
+                ])
+            else:
+                docs_content = "internal Error - NO Document Retrieved!"
             
             if settings.ENABLE_CONVERSATION_MEMORY:
                 conversation_history = state.get("conversation_history", "")
             else:
-                conversation_history = "No history given or found , Consider this the first time talking to the user"
-
+                conversation_history = "No history given"
+            
             instruction = ANSWER_GENERATION_PROMPT.invoke({
-                "context" : docs_content,
+                "context": docs_content,
                 "maxtoken": settings.ANSWER_LLM_OUTPUT_TOKEN,
                 "conversation_history": conversation_history
-                })
+            })
             
-            if settings.LLM_TURNED_ON:
-                response = self.llm_client.models.generate_content(
+            if not settings.LLM_TURNED_ON:
+                logger.warning("Test answer generated") if DEBUG_MOD else None
+                return {"answer": test_message_collection.test_message_2}
+            
+            # if LLM IS ON :
+            try:
+                answer = await engine.llm.generate(
                     model=settings.ANSWER_GENERATOR_MODEL_NAME,
-                    config=types.GenerateContentConfig(
-                        system_instruction=instruction,
-                        temperature=0.1,
-                        top_p=0.9
-                    ),
-                    contents=f"<user_query>{question}</user_query>",
+                    system_instruction=instruction,
+                    content=f"<user_query>{question}</user_query>",
+                    temperature=0.1,
+                    top_p=0.9
                 )
                 logger.info("Answer generated") if DEBUG_MOD else None
-                return {"answer": response.text}
+                return {"answer": answer}
             
-            logger.warning("Test answer generated") if DEBUG_MOD else None
-            return {"answer": test_message_collection.test_message_2}
+            except Exception as e:
+                logger.error("Answer generation failed", error=str(e))
+                return {"answer": "I'm sorry, I encountered an error generating a response. Please try again."}
         
-        # Build graph
+        # Build graph with async nodes
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)
         graph_builder.add_node("retrieve", retrieve_hybrid)
@@ -303,7 +444,7 @@ class RAGEngine:
         graph_builder.add_edge("generate", END)
         
         self.graph = graph_builder.compile()
-        logger.info("✓ Graph compiled")
+        logger.info("✓  graph compiled")
 
     async def query(
         self,
@@ -311,53 +452,68 @@ class RAGEngine:
         conversation_history: str = ""
     ) -> Dict[str, Any]:
         """
-        Execute RAG query with optional conversation history.
+        Execute fully async RAG query.
         
         Args:
-            question: The user's current question
-            conversation_history: Formatted string of previous conversation
+            question: User's question
+            conversation_history: Formatted conversation history
             
         Returns:
-            Dict with question, enhanced_query, answer, usage, retrieved_docs
+            Dict with answer, enhanced_query, retrieved_docs, etc.
         """
-        loop = asyncio.get_event_loop()
-        
-        # Prepare input state
         input_state = {
             "question": question,
             "conversation_history": conversation_history
         }
         
-        result = await loop.run_in_executor(
-            None,
-            self.graph.invoke,
-            input_state
-        )
+        try:
+            # graph execution
+            result = await asyncio.wait_for(
+                self.graph.ainvoke(input_state),
+                timeout=settings.TOTAL_QUERY_TIMEOUT_SECONDS
+            )
+            
+            return {
+                "question": result.get("question"),
+                "enhanced_query": result.get("enhanced_query"),
+                "answer": result.get("answer"),
+                "usage": {},
+                "retrieved_docs": [
+                    {"content": doc.page_content, "metadata": doc.metadata}
+                    for doc in result.get("docs", [])
+                ],
+                "had_conversation_context": bool(conversation_history)
+            }
         
-        return {
-            "question": result.get("question"),
-            "enhanced_query": result.get("enhanced_query"),
-            "answer": result.get("answer"),
-            "usage": {},  # Add usage tracking if needed
-            "retrieved_docs": [
-                {"content": doc.page_content, "metadata": doc.metadata}
-                for doc in result.get("docs", [])
-            ],
-            "had_conversation_context": bool(conversation_history)
-        }
+        except asyncio.TimeoutError:
+            logger.error("Total query timeout", question=question[:50])
+            raise InternalException("query timeout")
+
+        
+        except Exception as e:
+            logger.error("an error occurred", error=str(e), question=question[:50])
+            raise InternalException("an error occurred")
+            
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get RAG engine statistics"""
+        """Get RAG engine statistics."""
         return {
             "model": settings.EMBEDDING_MODEL_PATH,
             "index": settings.ELASTICSEARCH_INDEX_NAME,
             "documents_count": len(self.docs),
             "device": settings.DEVICE,
             "memory_enabled": settings.ENABLE_CONVERSATION_MEMORY,
-            "max_history_messages": settings.MEMORY_MAX_MESSAGES
+            "max_history_messages": settings.MEMORY_MAX_MESSAGES,
+            "async": True,
+            "timeouts": {
+                "llm": settings.LLM_TIMEOUT_SECONDS,
+                "retrieval": settings.RETRIEVAL_TIMEOUT_SECONDS,
+                "total": settings.TOTAL_QUERY_TIMEOUT_SECONDS
+            }
         }
 
-# creates an instance 
-def create_rag_engine():
-    return RAGEngine()
 
+
+def create_rag_engine() -> RAGEngine:
+    """Factory function to create RAG engine."""
+    return RAGEngine()

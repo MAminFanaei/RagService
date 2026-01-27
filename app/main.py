@@ -128,7 +128,7 @@ async def health_check():
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
         "rag_engine": {
-            "status": rag_stats.get("status", "unknown"),
+            "status": rag_stats
         }
     }
 

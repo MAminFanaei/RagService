@@ -12,12 +12,14 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"
     INDEX_THE_DOCS : bool = True
     LLM_TURNED_ON : bool = True
+    USE_RERANKER : bool 
+    USE_BM25: bool 
     DEVICE : str
     
     # Server
     HOST: str 
     PORT: int = 8000
-    WORKERS: int = 4
+    WORKERS: int 
     
     # Security
     SECRET_KEY: str
@@ -67,7 +69,6 @@ class Settings(BaseSettings):
     # RAG Configuration
     EMBEDDING_MODEL_PATH: str 
     RERANKER_MODEL_PATH: str 
-    USE_RERANKER : bool 
     RETRIEVER_OUTPUT_K : int
     DOC_PATH : str 
     CHUNK_TOKENS: int 
@@ -93,11 +94,13 @@ class Settings(BaseSettings):
     # Use Redis for caching active conversations
     MAX_QUESTION_LENGTH: int = 5000  
 
-    # TIMEOUT SETTINGS
+    # ASYNC & TIMEOUT SETTINGS
     LLM_TIMEOUT_SECONDS: int = 100
     RETRIEVAL_TIMEOUT_SECONDS: int = 30
     TOTAL_QUERY_TIMEOUT_SECONDS: int = 120
-    
+    MAX_CONCURRENT_QUERIES: int = 10
+
+
     # CORS
     CORS_ORIGINS: List[str] 
     CORS_ALLOW_CREDENTIALS: bool 
