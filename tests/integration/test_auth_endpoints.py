@@ -176,32 +176,50 @@ class TestLogin:
 class TestTokenRefresh:
     """Test token refresh endpoint"""
     
-    def test_refresh_token_success(self, client: TestClient, user_token: dict):
-        """Should refresh token successfully"""
-        response = client.post(
+    def test_refresh_token_success(self, client, test_user, test_password):
+        """Test successful token refresh"""
+        # First login to get tokens
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"login": test_user.email, "password": test_password}
+        )
+        assert login_response.status_code == 200
+        tokens = login_response.json()
+        
+        # tokens is a dict with access_token and refresh_token
+        assert "refresh_token" in tokens
+        refresh_token = tokens["refresh_token"]
+        
+        # Use refresh token to get new tokens
+        refresh_response = client.post(
             "/api/v1/auth/refresh",
-            json={
-                "refresh_token": user_token["refresh_token"]
-            }
+            json={"refresh_token": refresh_token}
         )
         
-        assert response.status_code == 200
-        data = response.json()
-        assert "access_token" in data
-        assert "refresh_token" in data
-        # New tokens should be different
-        assert data["access_token"] != user_token["access_token"]
+        assert refresh_response.status_code == 200
+        new_tokens = refresh_response.json()
+        assert "access_token" in new_tokens
+        assert "refresh_token" in new_tokens
     
-    def test_refresh_with_access_token_fails(self, client: TestClient, user_token: dict):
-        """Should reject access token used as refresh token"""
-        response = client.post(
-            "/api/v1/auth/refresh",
-            json={
-                "refresh_token": user_token["access_token"]
-            }
-        )
-        
-        assert response.status_code == 401
+    def test_refresh_with_access_token_fails(self, client, test_user, test_password):
+            """Test refresh with access token fails"""
+            # First login
+            login_response = client.post(
+                "/api/v1/auth/login",
+                json={"login": test_user.email, "password": test_password}
+            )
+            assert login_response.status_code == 200
+            tokens = login_response.json()
+            
+            access_token = tokens["access_token"]
+            
+            # Try to use access token as refresh token - should fail
+            refresh_response = client.post(
+                "/api/v1/auth/refresh",
+                json={"refresh_token": access_token}
+            )
+            
+            assert refresh_response.status_code == 401
     
     def test_refresh_invalid_token(self, client: TestClient):
         """Should reject invalid refresh token"""

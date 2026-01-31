@@ -30,7 +30,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 DEBUG_MOD = settings.DEBUG
 
 # Thread pool for CPU-bound operations
-_executor = ThreadPoolExecutor(max_workers=settings.WORKERS)
+if settings.USE_BM25 or settings.USE_RERANKER:
+    _executor = ThreadPoolExecutor(max_workers=settings.WORKERS)
 
 
 class State(TypedDict):

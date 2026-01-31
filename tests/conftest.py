@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+from dataclasses import dataclass
+from typing import Any
 
 # Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,6 +56,40 @@ ADMIN_PASSWORD = "AdminPassword123!"
 
 
 # =============================================================================
+# HELPER CLASSES
+# =============================================================================
+
+@dataclass
+class ChatWithMessages:
+    """Helper class to hold chat and messages together"""
+    chat: Any
+    messages: list
+    
+    @property
+    def id(self):
+        return self.chat.id
+    
+    @property
+    def user_id(self):
+        return self.chat.user_id
+    
+    @property
+    def title(self):
+        return self.chat.title
+
+
+@dataclass 
+class UserWithChat:
+    """Helper class to hold user and their chat together"""
+    user: Any
+    chat: Any
+    
+    def __iter__(self):
+        """Allow unpacking as tuple: user, chat = user_with_chat"""
+        return iter([self.user, self.chat])
+
+
+# =============================================================================
 # PYTEST CONFIGURATION
 # =============================================================================
 
@@ -71,6 +107,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "unit: Unit tests (no external deps)")
     config.addinivalue_line("markers", "integration: Integration tests (need DB/Redis)")
     config.addinivalue_line("markers", "security: Security tests")
+    config.addinivalue_line("markers", "slow: Slow running tests")
 
 
 # =============================================================================
@@ -177,25 +214,70 @@ def db_committed(engine, tables):
     session.close()
 
 
+# Alias for db_committed
+@pytest.fixture
+def db_with_commit(db_committed):
+    """Alias for db_committed"""
+    return db_committed
+
+
 # =============================================================================
 # REDIS FIXTURES
 # =============================================================================
 
 @pytest.fixture
 def redis_client():
-    """Real Redis client - synchronous wrapper for async redis"""
+    """Sync Redis client for tests"""
     import redis
     
     client = redis.from_url(
-        TEST_REDIS_URL.replace("redis://", "redis://"),
+        TEST_REDIS_URL,
         encoding="utf-8",
         decode_responses=True
     )
     
     yield client
     
-    client.flushdb()
+    try:
+        client.flushdb()
+    except:
+        pass
     client.close()
+
+
+@pytest.fixture
+def async_redis_client():
+    """
+    Async Redis client - returns a NEW client each time.
+    Use this for async tests that need await redis.set(), etc.
+    """
+    import redis.asyncio as aioredis
+    
+    async def _get_client():
+        client = await aioredis.from_url(
+            TEST_REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True
+        )
+        return client
+    
+    # Return the coroutine function, not the client
+    # Tests should call: client = await async_redis_client()
+    return _get_client
+
+@pytest.fixture
+async def redis_async(async_redis_client):
+    """
+    Ready-to-use async Redis client.
+    Automatically cleaned up after test.
+    """
+    client = await async_redis_client()
+    yield client
+    try:
+        await client.flushdb()
+    except:
+        pass
+    await client.close()
 
 
 @pytest.fixture
@@ -285,6 +367,12 @@ def test_password():
     return TEST_PASSWORD
 
 
+@pytest.fixture
+def admin_password():
+    """Admin test password"""
+    return ADMIN_PASSWORD
+
+
 # =============================================================================
 # USER FIXTURES (for integration tests)
 # =============================================================================
@@ -329,6 +417,13 @@ def admin_user(db):
     db.commit()
     db.refresh(user)
     return user
+
+
+# Alias for admin_user
+@pytest.fixture
+def test_admin(admin_user):
+    """Alias for admin_user"""
+    return admin_user
 
 
 @pytest.fixture
@@ -480,7 +575,7 @@ def client(db):
 
 
 @pytest.fixture
-def async_client(db):
+async def async_client(db):
     """Async HTTP client for async tests"""
     from httpx import AsyncClient, ASGITransport
     from app.main import app
@@ -494,11 +589,9 @@ def async_client(db):
     
     app.dependency_overrides[get_db] = override_get_db
     
-    # Create async client with ASGITransport
     transport = ASGITransport(app=app)
-    client = AsyncClient(transport=transport, base_url="http://test")
-    
-    yield client
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
     
     app.dependency_overrides.clear()
 
@@ -524,7 +617,10 @@ def test_chat(db, test_user):
 
 @pytest.fixture
 def other_user_chat(db, other_user):
-    """Create a chat owned by other_user (for IDOR tests)"""
+    """
+    Create a chat owned by other_user (for IDOR tests).
+    Returns a UserWithChat object that can be unpacked as (user, chat).
+    """
     from app.models.chat import ChatSession
     
     chat = ChatSession(
@@ -534,7 +630,8 @@ def other_user_chat(db, other_user):
     db.add(chat)
     db.commit()
     db.refresh(chat)
-    return chat
+    
+    return UserWithChat(user=other_user, chat=chat)
 
 
 @pytest.fixture
@@ -584,7 +681,10 @@ def test_messages(db, test_chat):
 
 @pytest.fixture
 def test_chat_with_messages(db, test_user):
-    """Create a chat with messages already included"""
+    """
+    Create a chat with messages already included.
+    Returns ChatWithMessages object with .id, .chat, .messages properties.
+    """
     from app.models.chat import ChatSession
     from app.models.message import Message, MessageRole
     
@@ -613,8 +713,10 @@ def test_chat_with_messages(db, test_user):
         messages.append(msg)
     
     db.commit()
+    for msg in messages:
+        db.refresh(msg)
     
-    return {"chat": chat, "messages": messages}
+    return ChatWithMessages(chat=chat, messages=messages)
 
 
 # =============================================================================
