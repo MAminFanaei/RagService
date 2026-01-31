@@ -1,0 +1,76 @@
+.
+|-- Dockerfile
+|-- Dockerfile.base
+|-- OAUTH_SETUP.md
+|-- README.md
+|-- alembic
+|   |-- __pycache__
+|   |   |-- env.cpython-310.pyc
+|   |   `-- env.cpython-312.pyc
+|   |-- env.py
+|   |-- script.py.mako
+|   `-- versions
+|       |-- 4078008a858e_make_username_mandatory.py
+|       `-- __pycache__
+|-- alembic.ini
+|-- app
+|   |-- __init__.py
+|   |-- api
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- deps.py
+|   |   `-- v1
+|   |-- config.py
+|   |-- core
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- database.py
+|   |   |-- feature_flags.py
+|   |   |-- rag_engine.py
+|   |   `-- security.py
+|   |-- exceptions.py
+|   |-- main.py
+|   |-- middleware
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   `-- error_handler.py
+|   |-- models
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- chat.py
+|   |   |-- message.py
+|   |   `-- user.py
+|   |-- prompts.py
+|   |-- schemas
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- admin.py
+|   |   |-- auth.py
+|   |   |-- chat.py
+|   |   `-- user.py
+|   |-- services
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- chat_service.py
+|   |   |-- memory_service.py
+|   |   |-- rag_service.py
+|   |   |-- rate_limit_service.py
+|   |   `-- user_service.py
+|   `-- test_message_collection.py
+|-- docker-compose.yml
+|-- guides
+|   |-- GIT_SETUP.md
+|   |-- SETUP_GUIDE.md
+|   `-- deployment_checklist.md
+|
+|-- openapi.json
+|-- poetry.lock
+|-- prepare_documents.py
+|-- pyproject.toml
+|-- requirements-merged(for refrence).txt
+|-- requirements.txt
+|-- ss
+|-- structure.txt
+|-- tests
+|
+`-- tree.txt
