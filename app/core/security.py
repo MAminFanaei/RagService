@@ -79,6 +79,9 @@ def create_refresh_token(data: Dict[str, Any]) -> str:
 
 def decode_token(token: str) -> Optional[Dict[str, Any]]:
     """Decode and verify JWT token"""
+    if not token:  
+        return None
+    
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload
@@ -192,4 +195,4 @@ async def is_token_blacklisted(
         return result > 0
     except Exception as e:
         logger.warning("Failed to check token blacklist", error=str(e))
-        return False  # Fail open
+        return True  # Fail open

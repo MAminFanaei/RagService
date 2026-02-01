@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from app.models.chat import ChatSession
 from app.models.message import Message, MessageRole
-
+from sqlalchemy.exc import IntegrityError
 
 class ChatService:
     """Business logic for chat operations"""
@@ -165,36 +165,49 @@ class ChatService:
         usage: Optional[dict] = None,
         metadata: Optional[dict] = None
     ) -> Message:
-        """Add a message to a chat"""
-        # Get next order index
-        max_order = db.query(func.max(Message.order_index)).filter(
-            Message.chat_session_id == chat_id
-        ).scalar()
+        """Add a message to a chat with proper ordering"""
+
         
-        order_index = (max_order or 0) + 1
-        
-        # Clean metadata before saving
         cleaned_metadata = ChatService._clean_metadata(metadata)
         
-        message = Message(
-            chat_session_id=chat_id,
-            role=role,
-            content=content,
-            usage=usage,
-            order_index=order_index,
-            meta_data=cleaned_metadata 
-        )
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Use SELECT FOR UPDATE to lock the row
+                max_order = db.query(func.max(Message.order_index)).filter(
+                    Message.chat_session_id == chat_id
+                ).with_for_update().scalar()
+                
+                order_index = (max_order or 0) + 1
+                
+                message = Message(
+                    chat_session_id=chat_id,
+                    role=role,
+                    content=content,
+                    usage=usage,
+                    order_index=order_index,
+                    meta_data=cleaned_metadata
+                )
+                
+                db.add(message)
+                
+                # Update chat's updated_at
+                chat = db.query(ChatSession).filter(ChatSession.id == chat_id).first()
+                if chat:
+                    chat.updated_at = datetime.now(timezone.utc)
+                
+                db.commit()
+                db.refresh(message)
+                return message
+                
+            except IntegrityError:
+                db.rollback()
+                if attempt == max_retries - 1:
+                    raise
+                continue
         
-        db.add(message)
-        
-        # Update chat's updated_at
-        chat = db.query(ChatSession).filter(ChatSession.id == chat_id).first()
-        if chat:
-            chat.updated_at = datetime.now(timezone.utc)
-        
-        db.commit()
-        db.refresh(message)
-        return message
+        # if not return :
+        raise Exception("Failed to add message after retries")
     
     @staticmethod
     def get_messages(

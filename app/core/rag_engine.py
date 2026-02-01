@@ -1,6 +1,7 @@
 
 import asyncio
 import os
+import re
 from typing import Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor
 import structlog
@@ -33,7 +34,41 @@ DEBUG_MOD = settings.DEBUG
 if settings.USE_BM25 or settings.USE_RERANKER:
     _executor = ThreadPoolExecutor(max_workers=settings.WORKERS)
 
+def sanitize_user_input(text: str) -> str:
+    """
+    Sanitize user input to prevent prompt injection.
+    """
+    if not text:
+        return ""
+    
+    # Remove or escape potential injection patterns
+    sanitized = text
+    
+    # Remove XML/HTML-like tags that could confuse the model
+    sanitized = re.sub(r'<[^>]+>', '', sanitized)
+    
+    # Remove common prompt injection patterns
+    injection_patterns = [
+        r'ignore\s+(previous|above|all)\s+instructions?',
+        r'disregard\s+(previous|above|all)\s+instructions?',
+        r'forget\s+(previous|above|all)\s+instructions?',
+        r'you\s+are\s+now\s+',
+        r'new\s+instructions?:',
+        r'system\s*:',
+        r'assistant\s*:',
+        r'human\s*:',
+        r'\[INST\]',
+        r'\[/INST\]',
+        r'<<SYS>>',
+        r'<</SYS>>',
+    ]
+    
+    for pattern in injection_patterns:
+        sanitized = re.sub(pattern, '[FILTERED]', sanitized, flags=re.IGNORECASE)
+    return sanitized.strip()
 
+
+        
 class State(TypedDict):
     """State for LangGraph pipeline"""
     question: str
@@ -338,7 +373,7 @@ class RAGEngine:
             api_key=settings.LLM_API_KEY,
             base_url=settings.LLM_BASE_URL
         )
-        logger.info("✓ LLMClient Initialized" if settings.LLM_TURNED_ON else "⚠ LLM Client Disabled")
+        logger.info("✓ LLMClient Initialized" if settings.LLM_TURNED_ON else "✗ LLM Client Disabled")
         
         # Build graph
         self._build_graph()
@@ -356,7 +391,7 @@ class RAGEngine:
             """ query enhancement."""
             logger.info("Graph: Enhancing query") if DEBUG_MOD else None
             
-            question = state["question"]
+            question = sanitize_user_input(state["question"])
             
             instruction = QUERY_ENHANCEMENT_PROMPT.invoke({
                 "maxtoken": settings.ENHANCER_OUTPUT_TOKEN

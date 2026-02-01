@@ -43,13 +43,11 @@ class RateLimitService:
             current = await redis.get(key)
             count = int(current) if current else 0
             
-            allowed = count < limit_per_minute  # < not <= (we haven't incremented yet)
-            
-            return allowed
+            return count < limit_per_minute
             
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
-            return True
+            return False
     
     @staticmethod
     async def check_daily_quota(
@@ -76,7 +74,7 @@ class RateLimitService:
             
         except Exception as e:
             logger.error("Daily quota check failed, request failed ", error=str(e))
-            return False
+            return False , 0
     
     # ─────────────────────────────────────────────────────────
     # INCREMENT ONLY (after success)

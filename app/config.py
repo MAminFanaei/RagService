@@ -99,7 +99,12 @@ class Settings(BaseSettings):
     RETRIEVAL_TIMEOUT_SECONDS: int = 30
     TOTAL_QUERY_TIMEOUT_SECONDS: int = 120
     MAX_CONCURRENT_QUERIES: int = 10
-
+    
+    # DATABASE POOL SETTINGS
+    DB_POOL_SIZE: int 
+    DB_MAX_OVERFLOW: int 
+    DB_ECHO: bool 
+    REDIS_MAX_CONNECTIONS: int 
 
     # CORS
     CORS_ORIGINS: List[str] 

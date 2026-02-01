@@ -4,60 +4,20 @@
 ├── OAUTH_SETUP.md
 ├── README.md
 ├── alembic
-│   ├── __pycache__
-│   │   ├── env.cpython-310.pyc
-│   │   └── env.cpython-312.pyc
-│   ├── env.py
-│   ├── script.py.mako
-│   └── versions
-│       ├── 4078008a858e_make_username_mandatory.py
-│       └── __pycache__
-│           └── 4078008a858e_make_username_mandatory.cpython-310.pyc
 ├── alembic.ini
 ├── app
 │   ├── __init__.py
-│   ├── __pycache__
-│   │   ├── __init__.cpython-310.pyc
-│   │   ├── __init__.cpython-312.pyc
-│   │   ├── config.cpython-310.pyc
-│   │   ├── config.cpython-312.pyc
-│   │   ├── exceptions.cpython-310.pyc
-│   │   ├── main.cpython-310.pyc
-│   │   ├── main.cpython-312.pyc
-│   │   ├── prompts.cpython-310.pyc
-│   │   ├── prompts.cpython-312.pyc
-│   │   ├── test_message.cpython-310.pyc
-│   │   ├── test_message_collection.cpython-310-pytest-7.4.3.pyc
-│   │   ├── test_message_collection.cpython-310.pyc
-│   │   └── test_message_collection.cpython-312.pyc
 │   ├── api
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   └── deps.cpython-310.pyc
 │   │   ├── deps.py
 │   │   └── v1
 │   │       ├── __init__.py
-│   │       ├── __pycache__
-│   │       │   ├── __init__.cpython-310.pyc
-│   │       │   ├── admin.cpython-310.pyc
-│   │       │   ├── auth.cpython-310.pyc
-│   │       │   └── chats.cpython-310.pyc
 │   │       ├── admin.py
 │   │       ├── auth.py
 │   │       └── chats.py
 │   ├── config.py
 │   ├── core
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   ├── __init__.cpython-312.pyc
-│   │   │   ├── database.cpython-310.pyc
-│   │   │   ├── database.cpython-312.pyc
-│   │   │   ├── feature_flags.cpython-310.pyc
-│   │   │   ├── rag_engine.cpython-310.pyc
-│   │   │   ├── rag_engine.cpython-312.pyc
-│   │   │   └── security.cpython-310.pyc
 │   │   ├── database.py
 │   │   ├── feature_flags.py
 │   │   ├── rag_engine.py
@@ -66,46 +26,21 @@
 │   ├── main.py
 │   ├── middleware
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   └── error_handler.cpython-310.pyc
 │   │   └── error_handler.py
 │   ├── models
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   ├── __init__.cpython-312.pyc
-│   │   │   ├── chat.cpython-310.pyc
-│   │   │   ├── chat.cpython-312.pyc
-│   │   │   ├── message.cpython-310.pyc
-│   │   │   ├── message.cpython-312.pyc
-│   │   │   ├── user.cpython-310.pyc
-│   │   │   └── user.cpython-312.pyc
 │   │   ├── chat.py
 │   │   ├── message.py
 │   │   └── user.py
 │   ├── prompts.py
 │   ├── schemas
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   ├── admin.cpython-310.pyc
-│   │   │   ├── auth.cpython-310.pyc
-│   │   │   ├── chat.cpython-310.pyc
-│   │   │   └── user.cpython-310.pyc
 │   │   ├── admin.py
 │   │   ├── auth.py
 │   │   ├── chat.py
 │   │   └── user.py
 │   ├── services
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   ├── chat_service.cpython-310.pyc
-│   │   │   ├── memory_service.cpython-310.pyc
-│   │   │   ├── rag_service.cpython-310.pyc
-│   │   │   ├── rate_limit_service.cpython-310.pyc
-│   │   │   └── user_service.cpython-310.pyc
 │   │   ├── chat_service.py
 │   │   ├── memory_service.py
 │   │   ├── rag_service.py
@@ -114,141 +49,8 @@
 │   └── test_message_collection.py
 ├── docker-compose.yml
 ├── docs
-│   └── main
-│       ├── 6_mehvar_jahad_tabeen(final).json
-│       ├── Enghelab_eslami.json
-│       ├── Entekhabat_jadid.json
-│       ├── Tabyeen_Ba_Nour_1.json
-│       ├── Tabyeen_Ba_Nour_2.json
-│       ├── Tabyeen_Ba_Nour_3.json
-│       ├── Tabyeen_ba_Tebian.json
-│       ├── akhlagh_tashkilaty.json
-│       ├── black_box.json
-│       ├── corona.json
-│       ├── daghdaghe_haye_haj_ghasem.json
-│       ├── darsname.json
-│       ├── dogane_haye_sarneveshtsaz.json
-│       ├── fanavary_hastee.json
-│       ├── femenism.json
-│       ├── gaame_tamadon_saz.json
-│       ├── jahad.json
-│       ├── jahade_omid_afarin.json
-│       ├── khoda_zade(modified).json
-│       ├── khoda_zade(semi_final).json
-│       ├── khode_khoda(modified).json
-│       ├── khode_khoda(semi_final).json
-│       ├── meyar_tashkhice_kandidaye_aslah.json
-│       ├── moalefe_haye_maktab_soleimani.json
-│       ├── mojeze_toolid.json
-│       ├── moqavemat.json
-│       ├── moqavemat_poor_manfeat.json
-│       ├── mqayese_enghelabha.json
-│       ├── osool_Eghtedar.json
-│       ├── osoul_jame.json
-│       ├── parvande_ofol_america.json
-│       ├── rah_haye_nofoz_doshman.json
-│       ├── sanad_tahavoli_gh_gh.json
-│       ├── saye_roshan.json
-│       ├── shobehat_corona.json
-│       ├── shobhe_entekhabat.json
-│       ├── sooud2(semi_final).json
-│       ├── soud_chehel_sale_2.json
-│       ├── tasvir_vaghee_donia.json
-│       ├── virus.json
-│       ├── yaddasht_haye_alam.json
-│       ├── yek_meidan_shobhe.json
-│       ├── yek_sandoogh_shobhe.json
-│       ├── yek_van_shobhe.json
-│       └── zibayee_ha.json
-├── guides
-│   ├── GIT_SETUP.md
-│   ├── SETUP_GUIDE.md
-│   └── deployment_checklist.md
 ├── model_downloader.py
-├── models
-│   ├── bge-m3
-│   │   ├── 1_Pooling
-│   │   │   ├── config.json
-│   │   │   └── config.json:Zone.Identifier
-│   │   ├── README.md
-│   │   ├── README.md:Zone.Identifier
-│   │   ├── colbert_linear.pt
-│   │   ├── colbert_linear.pt:Zone.Identifier
-│   │   ├── config.json
-│   │   ├── config.json:Zone.Identifier
-│   │   ├── config_sentence_transformers.json
-│   │   ├── config_sentence_transformers.json:Zone.Identifier
-│   │   ├── imgs
-│   │   │   ├── bm25.jpg
-│   │   │   ├── bm25.jpg:Zone.Identifier
-│   │   │   ├── long.jpg
-│   │   │   ├── long.jpg:Zone.Identifier
-│   │   │   ├── miracl.jpg
-│   │   │   ├── miracl.jpg:Zone.Identifier
-│   │   │   ├── mkqa.jpg
-│   │   │   ├── mkqa.jpg:Zone.Identifier
-│   │   │   ├── nqa.jpg
-│   │   │   ├── nqa.jpg:Zone.Identifier
-│   │   │   ├── others.webp
-│   │   │   └── others.webp:Zone.Identifier
-│   │   ├── long.jpg
-│   │   ├── long.jpg:Zone.Identifier
-│   │   ├── modules.json
-│   │   ├── modules.json:Zone.Identifier
-│   │   ├── onnx
-│   │   │   ├── Constant_7_attr__value
-│   │   │   ├── Constant_7_attr__value:Zone.Identifier
-│   │   │   ├── config.json
-│   │   │   ├── config.json:Zone.Identifier
-│   │   │   ├── model.onnx
-│   │   │   ├── model.onnx:Zone.Identifier
-│   │   │   ├── model.onnx_data
-│   │   │   ├── model.onnx_data:Zone.Identifier
-│   │   │   ├── sentencepiece.bpe.model
-│   │   │   ├── sentencepiece.bpe.model:Zone.Identifier
-│   │   │   ├── special_tokens_map.json
-│   │   │   ├── special_tokens_map.json:Zone.Identifier
-│   │   │   ├── tokenizer.json
-│   │   │   ├── tokenizer.json:Zone.Identifier
-│   │   │   ├── tokenizer_config.json
-│   │   │   └── tokenizer_config.json:Zone.Identifier
-│   │   ├── pytorch_model.bin
-│   │   ├── pytorch_model.bin:Zone.Identifier
-│   │   ├── sentence_bert_config.json
-│   │   ├── sentence_bert_config.json:Zone.Identifier
-│   │   ├── sentencepiece.bpe.model
-│   │   ├── sentencepiece.bpe.model:Zone.Identifier
-│   │   ├── sparse_linear.pt
-│   │   ├── sparse_linear.pt:Zone.Identifier
-│   │   ├── special_tokens_map.json
-│   │   ├── special_tokens_map.json:Zone.Identifier
-│   │   ├── tokenizer.json
-│   │   ├── tokenizer.json:Zone.Identifier
-│   │   ├── tokenizer_config.json
-│   │   └── tokenizer_config.json:Zone.Identifier
-│   └── gte-multilingual-base
-│       ├── 1_Pooling
-│       │   ├── config.json
-│       │   └── config.json:Zone.Identifier
-│       ├── 2_Normalize
-│       ├── README.md
-│       ├── README.md:Zone.Identifier
-│       ├── config.json
-│       ├── config.json:Zone.Identifier
-│       ├── config_sentence_transformers.json
-│       ├── config_sentence_transformers.json:Zone.Identifier
-│       ├── model.safetensors
-│       ├── model.safetensors:Zone.Identifier
-│       ├── modules.json
-│       ├── modules.json:Zone.Identifier
-│       ├── sentence_bert_config.json
-│       ├── sentence_bert_config.json:Zone.Identifier
-│       ├── special_tokens_map.json
-│       ├── special_tokens_map.json:Zone.Identifier
-│       ├── tokenizer.json
-│       ├── tokenizer.json:Zone.Identifier
-│       ├── tokenizer_config.json
-│       └── tokenizer_config.json:Zone.Identifier
+├── embedder_local_models
 ├── openapi.json
 ├── poetry.lock
 ├── prepare_documents.py
@@ -256,28 +58,16 @@
 ├── pytest
 │   ├── README.md
 │   ├── async
-│   │   ├── __pycache__
-│   │   │   ├── test_concurrency.cpython-310-pytest-7.4.3.pyc
-│   │   │   └── test_timeouts.cpython-310-pytest-7.4.3.pyc
 │   │   ├── test_concurrency.py
 │   │   └── test_timeouts.py
 │   ├── conftest..py
 │   ├── integration
-│   │   ├── __pycache__
-│   │   │   ├── test_admin_endpoints.cpython-310-pytest-7.4.3.pyc
-│   │   │   ├── test_auth_endpoint.cpython-310-pytest-7.4.3.pyc
-│   │   │   └── test_chat_endpoints.cpython-310-pytest-7.4.3.pyc
 │   │   ├── test_admin_endpoints.py
 │   │   ├── test_auth_endpoint.py
 │   │   └── test_chat_endpoints.py
 │   ├── load
 │   │   └── locustfile.py
 │   ├── security
-│   │   ├── __pycache__
-│   │   │   ├── test_authentication.cpython-310-pytest-7.4.3.pyc
-│   │   │   ├── test_authorization.cpython-310-pytest-7.4.3.pyc
-│   │   │   ├── test_injection.cpython-310-pytest-7.4.3.pyc
-│   │   │   └── test_ratelimiting.cpython-310-pytest-7.4.3.pyc
 │   │   ├── test_authentication.py
 │   │   ├── test_authorization.py
 │   │   ├── test_injection.py
@@ -285,10 +75,6 @@
 │   ├── test-req.txt
 │   ├── tree.txt
 │   └── unit
-│       ├── __pycache__
-│       │   ├── test_rate_limiter.cpython-310-pytest-7.4.3.pyc
-│       │   ├── test_security.cpython-310-pytest-7.4.3.pyc
-│       │   └── test_user_service.cpython-310-pytest-7.4.3.pyc
 │       ├── test_rate_limiter.py
 │       ├── test_security.py
 │       └── test_user_service.py
@@ -296,14 +82,3 @@
 ├── requirements-merged(for refrence).txt
 ├── requirements.txt
 ├── ss
-├── tests
-│   ├── __init__.py
-│   ├── k6loadtest.js
-│   ├── rag_k6_send_only.js
-│   ├── rag_test_data_messages_per_user.json
-│   ├── test_api.sh
-│   └── verify_setup.py
-├── tree.txt
-└── tree2.txt
-
-43 directories, 264 files
