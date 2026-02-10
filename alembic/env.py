@@ -1,5 +1,12 @@
+# alembic/env.py
+"""
+Alembic Migration Environment - Updated for Async SQLAlchemy
+
+Uses SYNC engine for migrations (Alembic doesn't support async).
+"""
+
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import pool
 from alembic import context
 import os
 import sys
@@ -8,14 +15,15 @@ import sys
 sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..')))
 
 from app.config import settings
-from app.core.database import Base
+from app.core.database import Base, sync_engine, SYNC_DATABASE_URL
 from app.models import *  # Import all models
 
 # this is the Alembic Config object
 config = context.config
 
-# Override sqlalchemy.url with our DATABASE_URL
-config.set_main_option('sqlalchemy.url', settings.DATABASE_URL)
+# Override sqlalchemy.url with our SYNC DATABASE_URL
+# IMPORTANT: Use sync URL, not async URL!
+config.set_main_option('sqlalchemy.url', SYNC_DATABASE_URL)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
@@ -26,7 +34,13 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
+    """Run migrations in 'offline' mode.
+    
+    This configures the context with just a URL
+    and not an Engine, though an Engine is acceptable
+    here as well. By skipping the Engine creation
+    we don't even need a DBAPI to be available.
+    """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -40,12 +54,14 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    """Run migrations in 'online' mode.
+    
+    Uses the pre-created sync_engine from database.py
+    instead of creating a new one.
+    """
+    # Use the sync_engine we already created in database.py
+    # This ensures we're using pymysql, not asyncmy
+    connectable = sync_engine
 
     with connectable.connect() as connection:
         context.configure(

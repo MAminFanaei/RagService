@@ -1,11 +1,21 @@
 # app/api/v1/chats.py
-from fastapi import APIRouter, Depends, HTTPException, status, Query , Request
-from sqlalchemy.orm import Session
-import time
+"""
+Chat API Endpoints - Async Version
 
+All endpoints now use AsyncSession and await service calls.
+"""
+
+from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+import time
+import redis.asyncio as aioredis
 import structlog
+from profiling.middleware_timing import ProfileBlock, add_checkpoint
 from app.core.database import get_db
-from app.exceptions import ForbiddenException, InputTooLongException, InternalException, NotFoundException, RateLimitException , AppException
+from app.exceptions import (
+    ForbiddenException, InputTooLongException, InternalException, 
+    NotFoundException, RateLimitException, AppException
+)
 from app.schemas.chat import (
     ChatCreate, ChatUpdate, ChatResponse, ChatWithMessages,
     ChatListResponse, MessageCreate, RAGQueryResponse
@@ -16,22 +26,19 @@ from app.services.rate_limit_service import RateLimitService
 from app.api.deps import get_current_user, get_redis_client
 from app.models.user import User
 from app.config import settings
-import redis.asyncio as aioredis
 
 router = APIRouter(prefix="/chats", tags=["Chats"])
 logger = structlog.get_logger()
-
-# _clean_metadata() removed - no longer needed!
 
 
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_201_CREATED)
 async def create_chat(
     chat_data: ChatCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Create a new chat session"""
-    chat = ChatService.create_chat(db, current_user.id, chat_data.title)
+    """Create a new chat session."""
+    chat = await ChatService.create_chat(db, current_user.id, chat_data.title)
     
     return {
         "id": chat.id,
@@ -51,15 +58,15 @@ async def list_chats(
     limit: int = Query(20, ge=1, le=100),
     include_deleted: bool = Query(False),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """List user's chat sessions"""
-    return ChatService.list_user_chats(
+    """List user's chat sessions."""
+    return await ChatService.list_user_chats(
         db=db,
         user_id=current_user.id,
         skip=skip,
         limit=limit,
-        include_deleted=include_deleted
+        include_deleted=current_user.is_admin and include_deleted  # Only allow including deleted if admin
     )
 
 
@@ -67,16 +74,15 @@ async def list_chats(
 async def get_chat(
     chat_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get a specific chat with all messages"""
-    chat = ChatService.get_chat(db, chat_id, current_user.id)
+    """Get a specific chat with all messages."""
+    chat = await ChatService.get_chat(db, chat_id, current_user.id)
     if not chat:
         raise NotFoundException("Chat not found")
     
-    messages = ChatService.get_messages(db, chat_id)
+    messages = await ChatService.get_messages(db, chat_id)
     
-    # Only admins see full metadata
     cleaned_messages = [
         msg.to_response_dict(include_metadata=current_user.is_admin) 
         for msg in messages
@@ -92,7 +98,7 @@ async def get_chat(
         "message_count": len(cleaned_messages),
         "last_message_at": cleaned_messages[-1]["created_at"] if cleaned_messages else None,
         "messages": cleaned_messages
-    }  
+    }
 
 
 @router.patch("/{chat_id}", response_model=ChatResponse)
@@ -100,10 +106,10 @@ async def update_chat(
     chat_id: str,
     chat_update: ChatUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Update chat title"""
-    chat = ChatService.update_chat_title(
+    """Update chat title."""
+    chat = await ChatService.update_chat_title(
         db=db,
         chat_id=chat_id,
         user_id=current_user.id,
@@ -112,9 +118,8 @@ async def update_chat(
     
     if not chat:
         raise NotFoundException("Chat not found")
-
     
-    messages = ChatService.get_messages(db, chat_id, limit=1)
+    messages = await ChatService.get_messages(db, chat_id, limit=1)
     
     return {
         "id": chat.id,
@@ -132,38 +137,39 @@ async def update_chat(
 async def delete_chat(
     chat_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Soft delete a chat (can be restored)"""
-    chat = ChatService.get_chat(db, chat_id, current_user.id)
+    """Soft delete a chat."""
+    chat = await ChatService.get_chat(db, chat_id, current_user.id)
     if not chat:
-        raise NotFoundException("Chat not found ")
+        raise NotFoundException("Chat not found")
 
     if chat.is_deleted:
         raise NotFoundException("Chat not found (maybe deleted)")
-    success = ChatService.soft_delete_chat(db, chat_id, current_user.id)
+    
+    success = await ChatService.soft_delete_chat(db, chat_id, current_user.id)
     if not success:
         raise NotFoundException("Operation failed")
     
-    return "Chat successfully Deleted"
+    return "Chat successfully deleted"
 
 
 @router.post("/{chat_id}/restore", response_model=ChatResponse)
 async def restore_chat(
     chat_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Restore a soft-deleted chat"""
+    """Restore a soft-deleted chat."""
     if not current_user.is_admin:
         raise ForbiddenException("Admin access required")
-    success = ChatService.restore_chat(db, chat_id, current_user.id)
+    
+    success = await ChatService.restore_chat(db, chat_id, current_user.id)
     if not success:
         raise NotFoundException("Chat not found or not deleted")
-
     
-    chat = ChatService.get_chat(db, chat_id, current_user.id)
-    messages = ChatService.get_messages(db, chat_id, limit=1)
+    chat = await ChatService.get_chat(db, chat_id, current_user.id)
+    messages = await ChatService.get_messages(db, chat_id, limit=1)
     
     return {
         "id": chat.id,
@@ -183,10 +189,10 @@ async def send_message(
     message: MessageCreate,
     request: Request,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis_client)
 ):
-    """Send a message and get RAG response"""
+    """Send a message and get RAG response."""
     content_length = len(message.content)
     max_length = settings.MAX_QUESTION_LENGTH
     
@@ -195,21 +201,17 @@ async def send_message(
             max_length=max_length,
             actual_length=content_length
         )
-        
-    if current_user.is_admin : # only check ratelimit when user is not a admin
-        quota_allowed, quota_remaining , allowed = True , 9999, True
-    else :
+    
+    if current_user.is_admin:
+        quota_allowed, quota_remaining, allowed = True, 9999, True
+    else:
         rate_per_min, quota_per_day = RateLimitService.get_user_limits(current_user)
         
-        # ─────────────────────────────────────────────────────────
-        # CHECK limits (no increment)
-        # ─────────────────────────────────────────────────────────
         quota_allowed, quota_remaining = await RateLimitService.check_daily_quota(
             redis=redis,
             user_id=current_user.id,
             max_per_day=quota_per_day
         )
-        
         
         allowed = await RateLimitService.check_per_min_rate_limit(
             redis=redis,
@@ -218,17 +220,17 @@ async def send_message(
             key_prefix="rag_query"
         )
         
-        if not quota_allowed :
+        if not quota_allowed:
             raise RateLimitException("Daily message quota exceeded. Will reset at midnight.")
-
+        
         if not allowed:
-            raise RateLimitException("More than allowed messages were sent in a single minute. Please try again after a while.")
-
+            raise RateLimitException("Too many requests. Please try again later.")
     
+    # Validate chat exists and belongs to user BEFORE calling RAG engine
+    chat = await ChatService.get_chat(db, chat_id, current_user.id)
+    if not chat:
+        raise NotFoundException("Chat not found")
     
-    # ─────────────────────────────────────────────────────────
-    # PROCESS (might fail)
-    # ─────────────────────────────────────────────────────────
     
     try:
         start_time = time.time()
@@ -242,15 +244,10 @@ async def send_message(
         processing_time = (time.time() - start_time) * 1000
         
     except AppException:
-        raise     #Re-raise our custom exceptions (global handler catches them)
+        raise
     except Exception as e:
-        # Unknown errors become 500
         logger.error("RAG query failed", error=str(e))
         raise InternalException("Failed to process message")
-    
-    # ─────────────────────────────────────────────────────────
-    # SUCCESS - now increment counters
-    # ─────────────────────────────────────────────────────────
     
     await RateLimitService.increment_rate_limit(
         redis=redis,
@@ -263,17 +260,13 @@ async def send_message(
         user_id=current_user.id
     )
     
-    # ─────────────────────────────────────────────────────────
-    # RETURN response
-    # ─────────────────────────────────────────────────────────
-    
     return {
         "message_id": result["assistant_message"].id,
         "chat_id": chat_id,
         "user_message": result["user_message"].to_response_dict(include_metadata=current_user.is_admin),
         "assistant_message": result["assistant_message"].to_response_dict(include_metadata=current_user.is_admin),
         "processing_time_ms": processing_time,
-        "quota_remaining": quota_remaining - 1  # Optional: show remaining
+        "quota_remaining": quota_remaining - 1
     }
 
 
@@ -281,13 +274,13 @@ async def send_message(
 async def get_chat_memory(
     chat_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """[ADMIN ONLY] Get conversation memory for a chat."""
     if not current_user.is_admin:
         raise ForbiddenException("Admin access required")
     
-    chat = ChatService.get_chat_admin(db, chat_id)
+    chat = await ChatService.get_chat_admin(db, chat_id)
     if not chat:
         raise NotFoundException("Chat not found")
     

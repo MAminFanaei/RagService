@@ -1,76 +1,84 @@
 .
-|-- Dockerfile
-|-- Dockerfile.base
-|-- OAUTH_SETUP.md
-|-- README.md
-|-- alembic
-|   |-- __pycache__
-|   |   |-- env.cpython-310.pyc
-|   |   `-- env.cpython-312.pyc
-|   |-- env.py
-|   |-- script.py.mako
-|   `-- versions
-|       |-- 4078008a858e_make_username_mandatory.py
-|       `-- __pycache__
-|-- alembic.ini
-|-- app
-|   |-- __init__.py
-|   |-- api
-|   |   |-- __init__.py
-|   |   |-- __pycache__
-|   |   |-- deps.py
-|   |   `-- v1
-|   |-- config.py
-|   |-- core
-|   |   |-- __init__.py
-|   |   |-- __pycache__
-|   |   |-- database.py
-|   |   |-- feature_flags.py
-|   |   |-- rag_engine.py
-|   |   `-- security.py
-|   |-- exceptions.py
-|   |-- main.py
-|   |-- middleware
-|   |   |-- __init__.py
-|   |   |-- __pycache__
-|   |   `-- error_handler.py
-|   |-- models
-|   |   |-- __init__.py
-|   |   |-- __pycache__
-|   |   |-- chat.py
-|   |   |-- message.py
-|   |   `-- user.py
-|   |-- prompts.py
-|   |-- schemas
-|   |   |-- __init__.py
-|   |   |-- __pycache__
-|   |   |-- admin.py
-|   |   |-- auth.py
-|   |   |-- chat.py
-|   |   `-- user.py
-|   |-- services
-|   |   |-- __init__.py
-|   |   |-- __pycache__
-|   |   |-- chat_service.py
-|   |   |-- memory_service.py
-|   |   |-- rag_service.py
-|   |   |-- rate_limit_service.py
-|   |   `-- user_service.py
-|   `-- test_message_collection.py
-|-- docker-compose.yml
-|-- guides
-|   |-- GIT_SETUP.md
-|   |-- SETUP_GUIDE.md
-|   `-- deployment_checklist.md
-|
-|-- openapi.json
-|-- poetry.lock
-|-- prepare_documents.py
-|-- pyproject.toml
-|-- requirements-merged(for refrence).txt
-|-- requirements.txt
-|-- ss
-|-- structure.txt
-|-- tests
-|
-`-- tree.txt
+├── Dockerfile
+├── Dockerfile.base
+├── OAUTH_SETUP.md
+├── README.md
+├── alembic
+├── alembic.ini
+├── app
+│   ├── __init__.py
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── deps.py
+│   │   └── v1
+│   │       ├── __init__.py
+│   │       ├── admin.py
+│   │       ├── auth.py
+│   │       └── chats.py
+│   ├── config.py
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── database.py
+│   │   ├── feature_flags.py
+│   │   ├── rag_engine.py
+│   │   └── security.py
+│   ├── exceptions.py
+│   ├── main.py
+│   ├── middleware
+│   │   ├── __init__.py
+│   │   └── error_handler.py
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── chat.py
+│   │   ├── message.py
+│   │   └── user.py
+│   ├── prompts.py
+│   ├── schemas
+│   │   ├── __init__.py
+│   │   ├── admin.py
+│   │   ├── auth.py
+│   │   ├── chat.py
+│   │   └── user.py
+│   ├── services
+│   │   ├── __init__.py
+│   │   ├── chat_service.py
+│   │   ├── memory_service.py
+│   │   ├── rag_service.py
+│   │   ├── rate_limit_service.py
+│   │   └── user_service.py
+│   └── test_message_collection.py
+├── docker-compose.yml
+├── docs
+├── model_downloader.py
+├── embedder_local_models
+├── openapi.json
+├── poetry.lock
+├── prepare_documents.py
+├── pyproject.toml
+├── pytest
+│   ├── README.md
+│   ├── async
+│   │   ├── test_concurrency.py
+│   │   └── test_timeouts.py
+│   ├── conftest..py
+│   ├── integration
+│   │   ├── test_admin_endpoints.py
+│   │   ├── test_auth_endpoint.py
+│   │   └── test_chat_endpoints.py
+│   ├── load
+│   │   └── locustfile.py
+│   ├── security
+│   │   ├── test_authentication.py
+│   │   ├── test_authorization.py
+│   │   ├── test_injection.py
+│   │   └── test_ratelimiting.py
+│   ├── test-req.txt
+│   ├── tree.txt
+│   └── unit
+│       ├── test_rate_limiter.py
+│       ├── test_security.py
+│       └── test_user_service.py
+├── pytest.ini
+├── requirements-merged(for refrence).txt
+├── requirements.txt
+├── ss

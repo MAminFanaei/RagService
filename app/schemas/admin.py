@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field , model_validator , field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 
@@ -91,3 +91,36 @@ class UserActionResponse(BaseModel):
     message: str
     user_id: str
     is_active: bool
+
+
+class AdminPasswordResetRequest(BaseModel):
+    """Request body for admin to reset a user's password."""
+    admin_password: str = Field(..., min_length=1, description="Admin's own password for verification")
+    new_password: str = Field(..., min_length=8, description="New password for the target user")
+    confirm_new_password: str = Field(..., min_length=8, description="Confirm the new password")
+    
+    @field_validator('new_password')
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        """Validate password has minimum requirements."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if v.isdigit():
+            raise ValueError('Password cannot be all numbers')
+        if v.isalpha():
+            raise ValueError('Password must contain at least one number')
+        return v
+    
+    @model_validator(mode='after')
+    def passwords_match(self) -> 'AdminPasswordResetRequest':
+        """Validate that new_password and confirm_new_password match."""
+        if self.new_password != self.confirm_new_password:
+            raise ValueError('Passwords do not match')
+        return self
+
+
+class AdminPasswordResetResponse(BaseModel):
+    """Response for admin password reset."""
+    message: str
+    user_id: str
+    email: str

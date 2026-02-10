@@ -1,16 +1,16 @@
 # app/services/rag_service.py
 """
-RAG Service with Conversation Memory
+RAG Service with Conversation Memory - Async Version
 
 Orchestrates RAG queries with conversation context.
+All database operations are now truly async.
 """
 
 import time
 from typing import Dict, Any
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from fastapi import Request # import rag_engin from main.py
 from app.exceptions import BadRequestException
 from app.services.chat_service import ChatService
 from app.services.memory_service import memory_service, ConversationContext
@@ -22,17 +22,11 @@ DEBUG = settings.DEBUG
 
 
 class RAGService:
-    """
-    Business logic for RAG operations.
-    
-    Includes conversation memory integration:
-    1. Loads conversation history before processing
-    2. Passes history to RAG engine
-    """
+    """Business logic for RAG operations - Async version."""
     
     @staticmethod
     async def process_query(
-        db: Session,
+        db: AsyncSession,
         chat_id: str,
         user_id: str,
         question: str,
@@ -41,30 +35,17 @@ class RAGService:
         """
         Process a RAG query with conversation memory.
         
-        Args:
-            db: Database session
-            chat_id: Chat session ID
-            user_id: User ID
-            question: User's question
-            
-        Returns:
-            {
-                "user_message": Message,
-                "assistant_message": Message,
-                "processing_time_ms": float,
-                "rag_metadata": dict,
-                "context_info": dict
-            }
+        All database operations are now async.
         """
-        # Verify chat ownership
-        chat = ChatService.get_chat(db, chat_id, user_id)
+        # Verify chat ownership - ASYNC
+        chat = await ChatService.get_chat(db, chat_id, user_id)
         if not chat:
             raise BadRequestException("Chat not found or unauthorized")
         
         start_time = time.time()
         
         # =====================================================================
-        # STEP 1: Load Conversation History
+        # STEP 1: Load Conversation History - ASYNC
         # =====================================================================
         conversation_history = ""
         context_info = {
@@ -94,14 +75,14 @@ class RAGService:
                     })
                     
                     if DEBUG:
-                        logger.info(f" RAGService: Loaded {len(context.messages)} messages for context")
+                        logger.info(f"RAGService: Loaded {len(context.messages)} messages for context")
                 
             except Exception as e:
                 if DEBUG:
-                    logger.info(f"⚠️ RAGService: Failed to load conversation history: {e}")
+                    logger.info(f"RAGService: Failed to load conversation history: {e}")
         
         # =====================================================================
-        # STEP 2: Execute RAG Query with History
+        # STEP 2: Execute RAG Query with History (already async)
         # =====================================================================
         rag_result = await rag_engine.query(
             question=question,
@@ -111,9 +92,9 @@ class RAGService:
         processing_time = (time.time() - start_time) * 1000
         
         # =====================================================================
-        # STEP 3: Save Messages to Database
+        # STEP 3: Save Messages to Database - ASYNC
         # =====================================================================
-        user_message = ChatService.add_message(
+        user_message = await ChatService.add_message(
             db=db,
             chat_id=chat_id,
             role=MessageRole.USER,
@@ -137,7 +118,7 @@ class RAGService:
             ]
         }
         
-        assistant_message = ChatService.add_message(
+        assistant_message = await ChatService.add_message(
             db=db,
             chat_id=chat_id,
             role=MessageRole.ASSISTANT,
@@ -147,11 +128,11 @@ class RAGService:
         )
         
         # =====================================================================
-        # STEP 4: Auto-title and Return
+        # STEP 4: Auto-title and Return - ASYNC
         # =====================================================================
         if user_message.order_index == 1:
             auto_title = ChatService.auto_generate_title(question)
-            ChatService.update_chat_title(db, chat_id, user_id, auto_title)
+            await ChatService.update_chat_title(db, chat_id, user_id, auto_title)
         
         return {
             "user_message": user_message,
@@ -163,7 +144,8 @@ class RAGService:
     
     @staticmethod
     def get_rag_stats() -> Dict[str, Any]:
-        """Get RAG engine statistics"""
+        """Get RAG engine statistics."""
+        from fastapi import Request
         try:
             stats = Request.app.state.rag_engine.get_stats()
             stats["status"] = "healthy"

@@ -1,32 +1,30 @@
 # app/services/memory_service.py
 """
-Conversation Memory Service
+Conversation Memory Service - Async Version
 
-Handles loading and formatting conversation history for the RAG engine.
-Loads directly from MySQL - no Redis caching.
+Loads conversation history directly from MySQL using async queries.
 """
 
 from typing import List, Dict, Optional
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc, func
 
 from app.models.message import Message
 from app.models.chat import ChatSession
 from app.config import settings
 import structlog
+
 logger = structlog.get_logger()
-
-
 DEBUG = settings.DEBUG
 
 
 @dataclass
 class ConversationMessage:
-    """Structured representation of a conversation message"""
-    role: str  # "user", "assistant", "system"
+    """Structured representation of a conversation message."""
+    role: str
     content: str
     created_at: datetime
     metadata: Optional[Dict] = None
@@ -41,7 +39,7 @@ class ConversationMessage:
     
     @classmethod
     def from_db_message(cls, msg: Message) -> "ConversationMessage":
-        """Create from SQLAlchemy Message model"""
+        """Create from SQLAlchemy Message model."""
         return cls(
             role=msg.role.value if hasattr(msg.role, 'value') else msg.role,
             content=msg.content,
@@ -52,7 +50,7 @@ class ConversationMessage:
 
 @dataclass
 class ConversationContext:
-    """Full conversation context for RAG processing"""
+    """Full conversation context for RAG processing."""
     chat_id: str
     user_id: str
     messages: List[ConversationMessage]
@@ -60,16 +58,13 @@ class ConversationContext:
     
     @property
     def turn_count(self) -> int:
-        """Number of conversation turns (user-assistant pairs)"""
         return len([m for m in self.messages if m.role == "user"])
     
     @property
     def has_history(self) -> bool:
-        """Check if there's any conversation history"""
         return len(self.messages) > 0
     
     def get_formatted_history(self, max_messages: Optional[int] = None) -> str:
-        """Format conversation history as a string for prompts."""
         messages_to_format = self.messages
         if max_messages:
             messages_to_format = self.messages[-max_messages:]
@@ -85,17 +80,15 @@ class ConversationContext:
         return "\n\n".join(formatted_parts)
     
     def get_recent_context(self, n_turns: int = 2) -> str:
-        """Get just the last N conversation turns for quick context"""
         n_messages = n_turns * 2
         return self.get_formatted_history(max_messages=n_messages)
 
 
 class ConversationMemoryService:
     """
-    Service for managing conversation memory.
+    Service for managing conversation memory - Async version.
     
-    Loads conversation history directly from MySQL.
-    With proper indexing, this is fast enough (<5ms for 10 messages).
+    All database operations are truly async now.
     """
     
     def __init__(self):
@@ -104,23 +97,12 @@ class ConversationMemoryService:
 
     async def get_conversation_context(
         self,
-        db: Session,
+        db: AsyncSession,
         chat_id: str,
         user_id: str,
         exclude_last_n: int = 0
     ) -> ConversationContext:
-        """
-        Get conversation context for a chat session.
-        
-        Args:
-            db: Database session
-            chat_id: Chat session ID
-            user_id: User ID (for verification)
-            exclude_last_n: Exclude last N messages
-            
-        Returns:
-            ConversationContext with formatted history
-        """
+        """Get conversation context for a chat session."""
         context = await self._load_from_database(
             db=db,
             chat_id=chat_id,
@@ -129,25 +111,28 @@ class ConversationMemoryService:
         )
         
         if DEBUG:
-            logger.info(f" Memory: Loaded {len(context.messages)} messages for chat {chat_id[:8]}")
+            logger.info(f"Memory: Loaded {len(context.messages)} messages for chat {chat_id[:8]}")
         
         return context
 
     async def _load_from_database(
         self,
-        db: Session,
+        db: AsyncSession,
         chat_id: str,
         user_id: str,
         exclude_last_n: int = 0
     ) -> ConversationContext:
-        """Load conversation history from MySQL."""
+        """Load conversation history from MySQL - Async."""
         
         # Verify chat exists and belongs to user
-        chat = db.query(ChatSession).filter(
-            ChatSession.id == chat_id,
-            ChatSession.user_id == user_id,
-            ChatSession.is_deleted == False
-        ).first()
+        result = await db.execute(
+            select(ChatSession).where(
+                ChatSession.id == chat_id,
+                ChatSession.user_id == user_id,
+                ChatSession.is_deleted == False
+            )
+        )
+        chat = result.scalar_one_or_none()
         
         if not chat:
             return ConversationContext(
@@ -158,16 +143,22 @@ class ConversationMemoryService:
             )
         
         # Get total message count
-        total_count = db.query(func.count(Message.id)).filter(
-            Message.chat_session_id == chat_id
-        ).scalar() or 0
+        count_result = await db.execute(
+            select(func.count()).select_from(Message).where(
+                Message.chat_session_id == chat_id
+            )
+        )
+        total_count = count_result.scalar() or 0
         
         # Load recent messages
         query_limit = self.max_messages + exclude_last_n + 2
         
-        db_messages = db.query(Message).filter(
-            Message.chat_session_id == chat_id
-        ).order_by(desc(Message.order_index)).limit(query_limit).all()
+        result = await db.execute(
+            select(Message).where(
+                Message.chat_session_id == chat_id
+            ).order_by(desc(Message.order_index)).limit(query_limit)
+        )
+        db_messages = list(result.scalars().all())
         
         # Reverse to get chronological order
         db_messages = list(reversed(db_messages))
@@ -194,7 +185,7 @@ class ConversationMemoryService:
         )
 
     def estimate_token_count(self, text: str) -> int:
-        """Rough estimation of token count (1 token ≈ 4 chars)"""
+        """Rough estimation of token count (1 token ≈ 4 chars)."""
         return len(text) // 4
     
     def truncate_to_token_limit(

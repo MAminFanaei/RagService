@@ -1,404 +1,343 @@
 # tests/async/test_concurrency.py
 """
-Async and Concurrency Tests
+Async Concurrency Tests
 
-Tests for race conditions, deadlocks, and concurrent operation correctness.
+Tests for concurrent operations, race conditions, and async resource management.
+All tests are truly async and test actual application behavior.
 """
 
-from unittest.mock import AsyncMock, MagicMock
 import pytest
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import uuid
-from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy.orm import Session
+from app.services.rate_limit_service import RateLimitService
+from app.core.security import (
+    create_token_pair,
+    blacklist_token,
+    is_token_blacklisted,
+    decode_token,
+    get_password_hash_async,
+    verify_password_async,
+)
 
-from app.models.user import User
-from app.models.chat import ChatSession
-from app.models.message import Message, MessageRole
-from app.services.chat_service import ChatService
+
+# =============================================================================
+# CONCURRENT TOKEN OPERATIONS
+# =============================================================================
 
 
-class TestMessageOrderingRaceCondition:
-    """Test race conditions in message ordering"""
-    
-    def test_concurrent_message_order_index(self, db: Session, test_chat: ChatSession):
-        """
-        Test that concurrent message additions get unique order indices.
-        
-        KNOWN ISSUE: Current implementation has a race condition:
-        1. Get max order_index
-        2. Add 1
-        3. Insert
-        
-        Two concurrent inserts might get the same order_index.
-        """
-        from app.services.chat_service import ChatService
-        
-        # Simulate race condition scenario
-        # In real concurrent scenario, this could cause duplicate indices
-        
-        # Add first message
-        msg1 = ChatService.add_message(
-            db=db,
-            chat_id=test_chat.id,
-            role=MessageRole.USER,
-            content="Message 1"
-        )
-        
-        # Add second message
-        msg2 = ChatService.add_message(
-            db=db,
-            chat_id=test_chat.id,
-            role=MessageRole.ASSISTANT,
-            content="Message 2"
-        )
-        
-        # Verify order indices are unique
-        assert msg1.order_index != msg2.order_index
-        assert msg2.order_index == msg1.order_index + 1
-    
-    def test_message_ordering_after_concurrent_adds(self, db_with_commit, test_password: str):
-        """
-        Test message ordering with actual concurrent database operations.
-        Uses db_with_commit to allow multiple sessions.
-        """
-        from app.models.user import User, AuthProvider
-        from app.core.security import get_password_hash
-        
-        db = db_with_commit
-        
-        # Create user and chat
-        user = User(
-            id=str(uuid.uuid4()),
-            email=f"concurrent_{uuid.uuid4().hex[:8]}@example.com",
-            username=f"concurrent_{uuid.uuid4().hex[:8]}",
-            hashed_password=get_password_hash(test_password),
-            auth_provider=AuthProvider.LOCAL,
-            is_active=True
-        )
-        db.add(user)
-        db.commit()
-        
-        chat = ChatSession(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            title="Concurrent Test Chat"
-        )
-        db.add(chat)
-        db.commit()
-        
-        # Add messages in a loop
-        messages = []
-        for i in range(5):
-            msg = ChatService.add_message(
-                db=db,
-                chat_id=chat.id,
-                role=MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT,
-                content=f"Message {i}"
+class TestConcurrentTokenOperations:
+    """Test concurrent token creation and blacklisting."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_token_pair_creation(self):
+        """Multiple concurrent token creations should produce unique tokens."""
+        tasks = [
+            asyncio.to_thread(
+                create_token_pair,
+                user_id=f"user_{i}",
+                email=f"user{i}@example.com",
+                is_admin=False,
             )
-            messages.append(msg)
-        
-        # Verify order
-        order_indices = [m.order_index for m in messages]
-        assert order_indices == sorted(order_indices)
-        assert len(set(order_indices)) == len(order_indices)  # All unique
+            for i in range(20)
+        ]
+        results = await asyncio.gather(*tasks)
 
+        access_tokens = {r["access_token"] for r in results}
+        refresh_tokens = {r["refresh_token"] for r in results}
 
-class TestAsyncOperations:
-    """Test async operation correctness"""
-    
+        assert len(access_tokens) == 20, "All access tokens must be unique"
+        assert len(refresh_tokens) == 20, "All refresh tokens must be unique"
+
     @pytest.mark.asyncio
-    async def test_concurrent_token_blacklist(self, db, test_user):
-        """Test concurrent token blacklist operations"""
-        from app.core.security import create_token_pair, blacklist_token, is_token_blacklisted, decode_token
-        
+    async def test_concurrent_blacklist_operations(self):
+        """Concurrent blacklist + check operations should be consistent."""
         mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock(return_value=True)
-        mock_redis.exists = AsyncMock(return_value=1)
-        
-        tokens = create_token_pair(
-            user_id=test_user.id,
-            email=test_user.email,
-            is_admin=False
-        )
-        access_token = tokens["access_token"]
-        payload = decode_token(access_token)
-        
-        result = await blacklist_token(mock_redis, access_token, payload)
+        blacklisted_keys = set()
+
+        async def mock_set(key, value, ex=None):
+            blacklisted_keys.add(key)
+            return True
+
+        async def mock_exists(key):
+            return 1 if key in blacklisted_keys else 0
+
+        mock_redis.set = mock_set
+        mock_redis.exists = mock_exists
+
+        token = create_token_pair("u1", "u1@test.com", False)["access_token"]
+        payload = decode_token(token)
+
+        # Blacklist the token
+        result = await blacklist_token(mock_redis, token, payload)
         assert result is True
-        
-        is_blacklisted = await is_token_blacklisted(mock_redis, access_token)
-        assert is_blacklisted is True
-    
+
+        # Concurrent checks should all see it as blacklisted
+        checks = await asyncio.gather(
+            *[is_token_blacklisted(mock_redis, token) for _ in range(10)]
+        )
+        assert all(c is True for c in checks)
+
+
+# =============================================================================
+# CONCURRENT RATE LIMIT OPERATIONS
+# =============================================================================
+
+
+class TestConcurrentRateLimiting:
+    """Test rate limiting under concurrent access."""
+
     @pytest.mark.asyncio
-    async def test_concurrent_rate_limit_checks(self, redis_client):
-        """Test concurrent rate limit checks"""
-        from app.services.rate_limit_service import RateLimitService
-        
-        user_id = f"concurrent_user_{uuid.uuid4().hex[:8]}"
-        
-        # Concurrent checks
+    async def test_concurrent_rate_limit_checks(self, mock_redis):
+        """Concurrent rate limit checks should all return consistent results."""
+        mock_redis.get = AsyncMock(return_value="5")
+
         async def check():
             return await RateLimitService.check_per_min_rate_limit(
-                redis=redis_client,
-                user_id=user_id,
-                limit_per_minute=100
+                redis=mock_redis, user_id="user123", limit_per_minute=10
             )
-        
-        results = await asyncio.gather(*[check() for _ in range(10)])
-        
-        # All should be allowed (no increment during check)
-        assert all(results)
-    
+
+        results = await asyncio.gather(*[check() for _ in range(20)])
+        # All should be allowed (count=5 < limit=10)
+        assert all(r is True for r in results)
+
     @pytest.mark.asyncio
-    async def test_concurrent_rate_limit_increments(self, test_user):
-        """Test concurrent rate limit increments"""
-        from app.services.rate_limit_service import RateLimitService
-        
-        mock_redis = AsyncMock()
+    async def test_concurrent_quota_checks(self, mock_redis):
+        """Concurrent daily quota checks should return consistent results."""
+        mock_redis.get = AsyncMock(return_value="50")
+
+        async def check():
+            return await RateLimitService.check_daily_quota(
+                redis=mock_redis, user_id="user123", max_per_day=100
+            )
+
+        results = await asyncio.gather(*[check() for _ in range(20)])
+        for allowed, remaining in results:
+            assert allowed is True
+            assert remaining == 50
+
+    @pytest.mark.asyncio
+    async def test_concurrent_increments(self, mock_redis):
+        """Concurrent increments should all succeed."""
+        call_count = 0
+
         pipeline_mock = AsyncMock()
         pipeline_mock.incr = AsyncMock(return_value=pipeline_mock)
         pipeline_mock.expire = AsyncMock(return_value=pipeline_mock)
-        pipeline_mock.execute = AsyncMock(return_value=[10, True])
+
+        async def mock_execute():
+            nonlocal call_count
+            call_count += 1
+            return [call_count, True]
+
+        pipeline_mock.execute = mock_execute
         pipeline_mock.__aenter__ = AsyncMock(return_value=pipeline_mock)
         pipeline_mock.__aexit__ = AsyncMock(return_value=None)
         mock_redis.pipeline = MagicMock(return_value=pipeline_mock)
-        
-        result = await RateLimitService.increment_rate_limit(
-            redis=mock_redis,
-            user_id=test_user.id,
-            key_prefix="test"
+
+        tasks = [
+            RateLimitService.increment_rate_limit(redis=mock_redis, user_id="user123")
+            for _ in range(10)
+        ]
+        results = await asyncio.gather(*tasks)
+
+        # All should return non-zero (successful increment)
+        assert all(r > 0 for r in results)
+
+
+# =============================================================================
+# CONCURRENT PASSWORD OPERATIONS
+# =============================================================================
+
+
+class TestConcurrentPasswordOperations:
+    """Test async password hashing under concurrent load."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_password_hashing(self):
+        """Multiple concurrent hash operations should all complete correctly."""
+        passwords = [f"Password{i}!" for i in range(5)]
+
+        hashes = await asyncio.gather(
+            *[get_password_hash_async(p) for p in passwords]
         )
-        
-        assert result == 10
 
+        assert len(hashes) == 5
+        assert all(h.startswith("$argon2") for h in hashes)
+        # All hashes should be unique (different passwords + salt)
+        assert len(set(hashes)) == 5
 
+    @pytest.mark.asyncio
+    async def test_concurrent_password_verification(self):
+        """Concurrent verify operations should not interfere with each other."""
+        password = "TestPassword123!"
+        hashed = await get_password_hash_async(password)
 
-class TestDatabaseConcurrency:
-    """Test database concurrency handling"""
-    
-    def test_concurrent_chat_creation(self, db_with_commit, test_password: str):
-        """Test creating multiple chats concurrently"""
-        from app.models.user import User, AuthProvider
-        from app.core.security import get_password_hash
-        
-        db = db_with_commit
-        
-        # Create user
-        user = User(
-            id=str(uuid.uuid4()),
-            email=f"multichat_{uuid.uuid4().hex[:8]}@example.com",
-            username=f"multichat_{uuid.uuid4().hex[:8]}",
-            hashed_password=get_password_hash(test_password),
-            auth_provider=AuthProvider.LOCAL,
-            is_active=True
+        # Concurrent: some correct, some wrong
+        tasks = []
+        for i in range(10):
+            if i % 2 == 0:
+                tasks.append(verify_password_async(password, hashed))
+            else:
+                tasks.append(verify_password_async("WrongPass!", hashed))
+
+        results = await asyncio.gather(*tasks)
+
+        for i, result in enumerate(results):
+            if i % 2 == 0:
+                assert result is True, f"Correct password failed at index {i}"
+            else:
+                assert result is False, f"Wrong password passed at index {i}"
+
+    @pytest.mark.asyncio
+    async def test_hashing_does_not_block_event_loop(self):
+        """Async hashing should allow other coroutines to run concurrently."""
+        events = []
+
+        async def track_event(name, delay=0.01):
+            await asyncio.sleep(delay)
+            events.append(name)
+
+        await asyncio.gather(
+            get_password_hash_async("SlowHash123!"),
+            track_event("concurrent_task_1"),
+            track_event("concurrent_task_2"),
         )
-        db.add(user)
-        db.commit()
-        
-        # Create multiple chats
-        chats = []
-        for i in range(5):
-            chat = ChatService.create_chat(db, user.id, f"Chat {i}")
-            chats.append(chat)
-        
-        # All should have unique IDs
-        chat_ids = [c.id for c in chats]
-        assert len(set(chat_ids)) == len(chat_ids)
-    
-    def test_concurrent_user_stats_update(self, db: Session, test_user: User, test_chat: ChatSession):
-        """Test that user stats are consistent under concurrent updates"""
-        from app.services.user_service import UserService
-        
-        # Get initial stats
-        initial_stats = UserService.get_user_stats(db, test_user.id)
-        initial_messages = initial_stats.get("total_messages", 0)
-        
-        # Add messages
-        for i in range(3):
-            ChatService.add_message(
-                db=db,
-                chat_id=test_chat.id,
-                role=MessageRole.USER,
-                content=f"Stat test {i}"
-            )
-        
-        # Get updated stats
-        updated_stats = UserService.get_user_stats(db, test_user.id)
-        
-        assert updated_stats["total_messages"] == initial_messages + 3
+
+        # Both tracking tasks should have completed
+        assert "concurrent_task_1" in events
+        assert "concurrent_task_2" in events
 
 
-class TestAsyncResourceCleanup:
-    """Test async resource cleanup using mocks"""
-
-    @pytest.mark.asyncio
-    async def test_redis_connection_cleanup(self):
-        """Test Redis connection cleanup"""
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock(return_value=True)
-        mock_redis.get = AsyncMock(return_value="value_0")
-        mock_redis.close = AsyncMock(return_value=None)
-        
-        for i in range(5):
-            await mock_redis.set(f"test_key_{i}", f"value_{i}")
-        
-        value = await mock_redis.get("test_key_0")
-        assert value == "value_0"
-        
-        await mock_redis.close()
-        mock_redis.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_async_timeout_cleanup(self):
-        """Test timeout doesn't leave resources hanging"""
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock(return_value=True)
-        mock_redis.get = AsyncMock(return_value="value")
-        
-        await mock_redis.set("timeout_test", "value")
-        result = await mock_redis.get("timeout_test")
-        assert result == "value"
-
-
-class TestThreadPoolExecutor:
-    """Test ThreadPoolExecutor usage in async context"""
-    
-    @pytest.mark.asyncio
-    async def test_executor_for_blocking_operations(self):
-        """Test running blocking operations in executor"""
-        import asyncio
-        
-        def blocking_operation():
-            import time
-            time.sleep(0.1)
-            return "completed"
-        
-        loop = asyncio.get_event_loop()
-        executor = ThreadPoolExecutor(max_workers=4)
-        
-        try:
-            # Run multiple blocking operations
-            tasks = [
-                loop.run_in_executor(executor, blocking_operation)
-                for _ in range(4)
-            ]
-            results = await asyncio.gather(*tasks)
-            
-            assert all(r == "completed" for r in results)
-        finally:
-            executor.shutdown(wait=True)
-    
-    @pytest.mark.asyncio
-    async def test_executor_exception_handling(self):
-        """Test exception handling in executor"""
-        import asyncio
-        
-        def failing_operation():
-            raise ValueError("Test error")
-        
-        loop = asyncio.get_event_loop()
-        executor = ThreadPoolExecutor(max_workers=2)
-        
-        try:
-            with pytest.raises(ValueError):
-                await loop.run_in_executor(executor, failing_operation)
-        finally:
-            executor.shutdown(wait=True)
-
-
-class TestAsyncContextManagers:
-    """Test async context managers"""
-
-    @pytest.mark.asyncio
-    async def test_redis_pipeline_context(self):
-        """Test Redis pipeline operations"""
-        mock_redis = AsyncMock()
-        
-        pipeline_mock = MagicMock()
-        pipeline_mock.set = MagicMock(return_value=pipeline_mock)
-        pipeline_mock.execute = AsyncMock(return_value=[True, True])
-        mock_redis.pipeline = MagicMock(return_value=pipeline_mock)
-        mock_redis.get = AsyncMock(return_value="value1")
-        
-        pipe = mock_redis.pipeline()
-        pipe.set("key1", "value1")
-        pipe.set("key2", "value2")
-        results = await pipe.execute()
-        
-        assert len(results) == 2
-        
-        val1 = await mock_redis.get("key1")
-        assert val1 == "value1"
-
-
-class TestEventLoopSafety:
-    """Test event loop safety"""
-    
-    @pytest.mark.asyncio
-    async def test_no_nested_event_loops(self):
-        """Ensure no nested event loop issues"""
-        # This tests that we don't accidentally create nested loops
-        
-        async def inner_async():
-            await asyncio.sleep(0.01)
-            return "inner"
-        
-        result = await inner_async()
-        assert result == "inner"
-    
-    @pytest.mark.asyncio
-    async def test_sync_in_async_context(self):
-        """Test calling sync code from async context"""
-        import time
-        
-        def sync_function():
-            time.sleep(0.01)
-            return "sync_result"
-        
-        # Should use executor for this in production
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, sync_function)
-        
-        assert result == "sync_result"
+# =============================================================================
+# SEMAPHORE & CONCURRENCY LIMITS
+# =============================================================================
 
 
 class TestConcurrencyLimits:
-    """Test concurrency limiting mechanisms"""
-    
+    """Test concurrency limiting patterns used in the application."""
+
     @pytest.mark.asyncio
-    async def test_semaphore_limiting(self):
-        """Test semaphore for limiting concurrent operations"""
+    async def test_semaphore_limits_concurrent_operations(self):
+        """Semaphore should enforce maximum concurrency."""
         max_concurrent = 3
         semaphore = asyncio.Semaphore(max_concurrent)
-        
-        active_count = 0
-        max_active = 0
-        
-        async def limited_operation():
-            nonlocal active_count, max_active
+
+        active = 0
+        peak_active = 0
+
+        async def limited_op():
+            nonlocal active, peak_active
             async with semaphore:
-                active_count += 1
-                max_active = max(max_active, active_count)
-                await asyncio.sleep(0.05)
-                active_count -= 1
-        
-        await asyncio.gather(*[limited_operation() for _ in range(10)])
-        
-        assert max_active <= max_concurrent
-    
+                active += 1
+                peak_active = max(peak_active, active)
+                await asyncio.sleep(0.02)
+                active -= 1
+
+        await asyncio.gather(*[limited_op() for _ in range(15)])
+
+        assert peak_active <= max_concurrent
+        assert active == 0  # All completed
+
     @pytest.mark.asyncio
-    async def test_bounded_concurrent_queries(self):
-        """
-        Test that concurrent queries are bounded.
-        
-        Your config has MAX_CONCURRENT_QUERIES = 10
-        """
+    async def test_max_concurrent_queries_config(self):
+        """Verify MAX_CONCURRENT_QUERIES is properly configured."""
         from app.config import settings
-        
-        max_queries = settings.MAX_CONCURRENT_QUERIES
-        assert max_queries > 0
-        
-        # In production, you'd test that the RAG engine respects this limit
+
+        assert settings.MAX_CONCURRENT_QUERIES > 0
+        assert isinstance(settings.MAX_CONCURRENT_QUERIES, int)
+
+
+# =============================================================================
+# TASK CANCELLATION
+# =============================================================================
+
+
+class TestTaskCancellation:
+    """Test graceful task cancellation handling."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_long_running_task(self):
+        """Cancelled tasks should clean up properly."""
+        cleanup_ran = False
+
+        async def long_task():
+            nonlocal cleanup_ran
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cleanup_ran = True
+                raise
+
+        task = asyncio.create_task(long_task())
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert cleanup_ran is True
+
+    @pytest.mark.asyncio
+    async def test_graceful_shutdown_completes_pending(self):
+        """Short-running tasks should complete before shutdown."""
+        completed = []
+
+        async def quick_task(task_id):
+            await asyncio.sleep(0.02)
+            completed.append(task_id)
+
+        tasks = [asyncio.create_task(quick_task(i)) for i in range(5)]
+
+        done, pending = await asyncio.wait(tasks, timeout=1.0)
+
+        assert len(done) == 5
+        assert len(pending) == 0
+        assert len(completed) == 5
+
+
+# =============================================================================
+# EXECUTOR INTEGRATION
+# =============================================================================
+
+
+class TestExecutorIntegration:
+    """Test ThreadPoolExecutor usage for blocking operations."""
+
+    @pytest.mark.asyncio
+    async def test_blocking_ops_in_executor(self):
+        """Blocking operations should run in executor without blocking loop."""
+        import time
+
+        def blocking_work():
+            time.sleep(0.05)
+            return "done"
+
+        loop = asyncio.get_event_loop()
+        executor = ThreadPoolExecutor(max_workers=4)
+
+        try:
+            results = await asyncio.gather(
+                *[loop.run_in_executor(executor, blocking_work) for _ in range(4)]
+            )
+            assert all(r == "done" for r in results)
+        finally:
+            executor.shutdown(wait=True)
+
+    @pytest.mark.asyncio
+    async def test_executor_exception_propagation(self):
+        """Exceptions in executor should propagate correctly."""
+
+        def failing_work():
+            raise ValueError("executor error")
+
+        loop = asyncio.get_event_loop()
+        executor = ThreadPoolExecutor(max_workers=1)
+
+        try:
+            with pytest.raises(ValueError, match="executor error"):
+                await loop.run_in_executor(executor, failing_work)
+        finally:
+            executor.shutdown(wait=True)

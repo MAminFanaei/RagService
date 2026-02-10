@@ -1,8 +1,15 @@
+# app/core/rag_engine.py
+"""
+Fully Async RAG Engine - CORRECT VERSION
+
+Key insight: similarity_search_by_vector is NOT IMPLEMENTED in langchain_elasticsearch!
+So we run the full similarity_search(query) in a thread pool instead.
+"""
 
 import asyncio
 import os
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 import structlog
 
@@ -30,24 +37,37 @@ logger = structlog.get_logger()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 DEBUG_MOD = settings.DEBUG
 
-# Thread pool for CPU-bound operations
+# =============================================================================
+# THREAD POOL CONFIGURATION
+# =============================================================================
+
+# How many concurrent embedding+search operations to allow
+# Each worker can handle one similarity_search (which includes embedding)
+# Thread pool for ES search (includes embedding inside)
+_search_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
+    max_workers=settings.ELASTIC_SEARCH_WORKERS,
+    thread_name_prefix="es_search"
+)
+logger.info(f"ES search executor initialized: {settings.ELASTIC_SEARCH_WORKERS} workers")
+
+# Separate pool for BM25/Reranker if enabled
+_cpu_executor: Optional[ThreadPoolExecutor] = None
 if settings.USE_BM25 or settings.USE_RERANKER:
-    _executor = ThreadPoolExecutor(max_workers=settings.WORKERS)
+    _cpu_executor = ThreadPoolExecutor(
+        max_workers=settings.CPU_BOUNDED_WORKERS,
+        thread_name_prefix="cpu_ops"
+    )
+    logger.info(f"CPU executor initialized: {settings.CPU_BOUNDED_WORKERS} workers")
+
 
 def sanitize_user_input(text: str) -> str:
-    """
-    Sanitize user input to prevent prompt injection.
-    """
+    """Sanitize user input to prevent prompt injection."""
     if not text:
         return ""
     
-    # Remove or escape potential injection patterns
     sanitized = text
-    
-    # Remove XML/HTML-like tags that could confuse the model
     sanitized = re.sub(r'<[^>]+>', '', sanitized)
     
-    # Remove common prompt injection patterns
     injection_patterns = [
         r'ignore\s+(previous|above|all)\s+instructions?',
         r'disregard\s+(previous|above|all)\s+instructions?',
@@ -68,7 +88,6 @@ def sanitize_user_input(text: str) -> str:
     return sanitized.strip()
 
 
-        
 class State(TypedDict):
     """State for LangGraph pipeline"""
     question: str
@@ -80,11 +99,10 @@ class State(TypedDict):
 
 class Retriever:
     """
-     hybrid retriever with configurable components.
+    Hybrid retriever with proper async handling.
     
-    - ES: Always enabled (primary)
-    - BM25: Optional (config toggle)
-    - Reranker: Optional, GPU-accelerated (config toggle)
+    KEY INSIGHT: similarity_search_by_vector is NOT IMPLEMENTED in langchain_elasticsearch!
+    So we run the full similarity_search(query) in a thread pool.
     """
     
     def __init__(
@@ -95,7 +113,7 @@ class Retriever:
         reranker_model: str,
         output_k: int,
         use_reranker: bool,
-        use_bm25: bool  # NEW parameter
+        use_bm25: bool
     ):
         self.es_store = es_store
         self.documents = documents
@@ -104,7 +122,7 @@ class Retriever:
         self.use_reranker = use_reranker
         self.use_bm25 = use_bm25
         
-        # BM25 - CPU only (sparse retrieval, no GPU version exists)
+        # BM25 - CPU only
         if self.use_bm25:
             self.bm25_retriever = BM25Retriever.from_documents(documents)
             self.bm25_retriever.k = output_k * 2
@@ -113,11 +131,11 @@ class Retriever:
             self.bm25_retriever = None
             logger.info("✗ BM25 disabled")
         
-        # Reranker - GPU accelerated via DEVICE setting
+        # Reranker - GPU accelerated
         if self.use_reranker:
             self.reranker = CrossEncoder(
                 reranker_model,
-                device=settings.DEVICE  # "cuda" or "cpu"
+                device=settings.DEVICE
             )
             logger.info("✓ Reranker enabled", device=settings.DEVICE)
         else:
@@ -131,33 +149,46 @@ class Retriever:
     
     async def retrieve(self, query: str) -> List[LangChainDocument]:
         """
-        hybrid retrieval with reranking.
-        """
-        # Always run ES
-        es_task = self._es_search(query, self.output_k * 2)
+        Hybrid retrieval with proper parallelism.
         
-        # Optionally run BM25
+        ES search runs in thread pool (includes embedding internally).
+        BM25 runs in separate thread pool if enabled.
+        """
+        # Run ES and BM25 in parallel (both in thread pools)
+        es_task = self._es_search_in_executor(query, self.output_k * 2)
+        
         if self.use_bm25:
             bm25_task = self._bm25_search(query)
             results = await asyncio.gather(es_task, bm25_task, return_exceptions=True)
             es_results = results[0] if not isinstance(results[0], Exception) else []
             bm25_results = results[1] if not isinstance(results[1], Exception) else []
+            
+            if isinstance(results[0], Exception):
+                logger.error("ES search exception", error=str(results[0]))
+            if isinstance(results[1], Exception):
+                logger.error("BM25 search exception", error=str(results[1]))
         else:
             es_results = await es_task
             if isinstance(es_results, Exception):
+                logger.error("ES search exception", error=str(es_results))
                 es_results = []
             bm25_results = []
         
         # Combine and deduplicate
-        candidates = es_results + bm25_results
+        candidates = list(es_results) + list(bm25_results)
         seen = set()
         unique_candidates = []
         
         for doc in candidates:
-            doc_id = doc.metadata.get("chunk_id")
-            if doc_id not in seen:
+            doc_id = doc.metadata.get("chunk_id") if doc.metadata else None
+            if doc_id and doc_id not in seen:
                 seen.add(doc_id)
                 unique_candidates.append(doc)
+            elif not doc_id:
+                content_hash = hash(doc.page_content[:100])
+                if content_hash not in seen:
+                    seen.add(content_hash)
+                    unique_candidates.append(doc)
         
         if not unique_candidates:
             logger.warning("No documents retrieved", query=query[:50])
@@ -165,21 +196,41 @@ class Retriever:
         
         # Optionally rerank
         if self.use_reranker and self.reranker:
-            return await self._reranker(query, unique_candidates)
+            return await self._rerank_async(query, unique_candidates)
         
         return unique_candidates[:self.output_k]
     
-    async def _es_search(self, query: str, k: int) -> List[LangChainDocument]:
-        """Elasticsearch similarity search."""
+    async def _es_search_in_executor(self, query: str, k: int) -> List[LangChainDocument]:
+        """
+        Run ES similarity_search in thread pool.
+        
+        This is the CORRECT approach because:
+        1. similarity_search(query) WORKS (includes embedding internally)
+        2. similarity_search_by_vector(embedding) is NOT IMPLEMENTED
+        3. Running in thread pool prevents blocking the event loop
+        """
+        loop = asyncio.get_running_loop()
+        
+        def do_search():
+            """Sync search function - runs in thread pool."""
+            try:
+                # Use the SYNC method that actually works!
+                results = self.es_store.similarity_search(query, k=k)
+                return results
+            except Exception as e:
+                logger.error("ES search error in thread", 
+                           error=str(e), 
+                           error_type=type(e).__name__)
+                return []
+        
         try:
-            # langchain-elasticsearch supports async
             results = await asyncio.wait_for(
-                self.es_store.asimilarity_search(query, k=k),
+                loop.run_in_executor(_search_executor, do_search),
                 timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
             )
-            return results
+            return results if results else []
         except asyncio.TimeoutError:
-            logger.warning("ES search timed out", query=query[:50])
+            logger.warning("ES search timed out")
             return []
         except Exception as e:
             logger.error("ES search failed", error=str(e))
@@ -187,30 +238,34 @@ class Retriever:
     
     async def _bm25_search(self, query: str) -> List[LangChainDocument]:
         """Run BM25 in executor (CPU-bound)."""
+        if not _cpu_executor or not self.bm25_retriever:
+            return []
+        
         loop = asyncio.get_running_loop()
         try:
             results = await asyncio.wait_for(
-                loop.run_in_executor(_executor, self.bm25_retriever.invoke, query),
+                loop.run_in_executor(_cpu_executor, self.bm25_retriever.invoke, query),
                 timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
             )
             return results
         except asyncio.TimeoutError:
-            logger.warning("BM25 search timed out", query=query[:50])
+            logger.warning("BM25 search timed out")
             return []
         except Exception as e:
             logger.error("BM25 search failed", error=str(e))
             return []
     
-    async def _reranker(
+    async def _rerank_async(
         self,
         query: str,
         candidates: List[LangChainDocument]
     ) -> List[LangChainDocument]:
-        """Rerank documents in executor (CPU-bound)."""
+        """Rerank documents in executor."""
         if not candidates or not self.use_reranker:
             return candidates[:self.output_k]
         
         loop = asyncio.get_running_loop()
+        executor = _cpu_executor or _search_executor
         
         def rerank():
             pairs = [[query, doc.page_content] for doc in candidates]
@@ -221,7 +276,7 @@ class Retriever:
         
         try:
             results = await asyncio.wait_for(
-                loop.run_in_executor(_executor, rerank),
+                loop.run_in_executor(executor, rerank),
                 timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
             )
             return results
@@ -231,14 +286,10 @@ class Retriever:
         except Exception as e:
             logger.error("Reranking failed", error=str(e))
             return candidates[:self.output_k]
-    
+
 
 class LLMClient:
-    """
-    wrapper for Google GenAI.
-    
-    Uses generate_content_async for true async LLM calls.
-    """
+    """Async wrapper for Google GenAI."""
     
     def __init__(self, api_key: str, base_url: str):
         self.client = genai.Client(
@@ -255,9 +306,7 @@ class LLMClient:
         temperature: float = 0.2,
         top_p: float = 0.7
     ) -> str:
-        """
-        LLM generation with timeout.
-        """
+        """Async LLM generation with timeout."""
         try:
             response = await asyncio.wait_for(
                 self.client.aio.models.generate_content(
@@ -282,12 +331,9 @@ class LLMClient:
 
 class RAGEngine:
     """
-    Fully async RAG engine with:
-    -  LLM calls via google-genai async API
-    -  Elasticsearch via langchain async methods
-    - CPU-bound operations in thread executor
-    - Configurable timeouts
-    - LangGraph with async nodes
+    Fully async RAG engine.
+    
+    ES search (with embedding) runs in thread pool for parallelism.
     """
     
     _instance = None
@@ -304,8 +350,8 @@ class RAGEngine:
             RAGEngine._initialized = True
     
     def _init_rag(self):
-        """Initialize RAG components (sync initialization)."""
-        logger.info("Initializing  RAG Engine...")
+        """Initialize RAG components."""
+        logger.info("Initializing RAG Engine...")
         
         # Initialize embeddings
         self.embeddings = HuggingFaceEmbeddings(
@@ -317,7 +363,7 @@ class RAGEngine:
             },
             encode_kwargs={'normalize_embeddings': True}
         )
-        logger.info("✓ Embedding Model Initialized")
+        logger.info("✓ Embedding Model Initialized", device=settings.DEVICE)
         
         # Initialize Elasticsearch store
         self.es_store = ElasticsearchStore(
@@ -363,9 +409,8 @@ class RAGEngine:
             reranker_model=settings.RERANKER_MODEL_PATH,
             output_k=settings.RETRIEVER_OUTPUT_K,
             use_reranker=settings.USE_RERANKER,
-            use_bm25=settings.USE_BM25 
+            use_bm25=settings.USE_BM25
         )
-
         logger.info("✓ Retriever Initialized")
         
         # Initialize LLM client
@@ -377,19 +422,16 @@ class RAGEngine:
         
         # Build graph
         self._build_graph()
-        logger.info("✓  RAG Engine initialized successfully")
+        logger.info("✓ RAG Engine initialized successfully")
     
-
     def _build_graph(self):
-        """Build LangGraph workflow with nodes."""
+        """Build LangGraph workflow with async nodes."""
+        engine = self
         
-        # Store self reference for closures
-        engine = self # such a nerdy move
-
-        # ------------------------------- Graph Nodes ---------------------------------
         async def enhance_query(state: State) -> Dict:
-            """ query enhancement."""
-            logger.info("Graph: Enhancing query") if DEBUG_MOD else None
+            """Query enhancement node."""
+            if DEBUG_MOD:
+                logger.debug("Graph: Enhancing query")
             
             question = sanitize_user_input(state["question"])
             
@@ -398,7 +440,6 @@ class RAGEngine:
             })
             
             if not settings.LLM_TURNED_ON:
-                logger.warning("Test query enhanced") if DEBUG_MOD else None
                 return {"enhanced_query": question}
             
             try:
@@ -409,25 +450,21 @@ class RAGEngine:
                     temperature=0.2,
                     top_p=0.7
                 )
-                logger.info("Query enhanced") if DEBUG_MOD else None
                 return {"enhanced_query": enhanced}
             except Exception as e:
                 logger.error("Query enhancement failed, using original", error=str(e))
                 return {"enhanced_query": question}
-            
-        # ------------------------------- Graph Nodes ---------------------------------
+        
         async def retrieve_hybrid(state: State) -> Dict:
-            """ hybrid retrieval."""
+            """Hybrid retrieval node."""
             query = state.get("enhanced_query", state["question"])
-            
             docs = await engine.retriever.retrieve(query)
-            
-            logger.info(f"Retrieved {len(docs)} documents") if DEBUG_MOD else None
+            if DEBUG_MOD:
+                logger.debug(f"Retrieved {len(docs)} documents")
             return {"docs": docs}
         
-        # ------------------------------- Graph Nodes ---------------------------------
         async def generate_answer(state: State) -> Dict:
-            """ answer generation."""
+            """Answer generation node."""
             question = state["question"]
             
             if state.get("docs"):
@@ -449,10 +486,8 @@ class RAGEngine:
             })
             
             if not settings.LLM_TURNED_ON:
-                logger.warning("Test answer generated") if DEBUG_MOD else None
                 return {"answer": test_message_collection.test_message_2}
             
-            # if LLM IS ON :
             try:
                 answer = await engine.llm.generate(
                     model=settings.ANSWER_GENERATOR_MODEL_NAME,
@@ -461,14 +496,12 @@ class RAGEngine:
                     temperature=0.1,
                     top_p=0.9
                 )
-                logger.info("Answer generated") if DEBUG_MOD else None
                 return {"answer": answer}
-            
             except Exception as e:
                 logger.error("Answer generation failed", error=str(e))
                 return {"answer": "I'm sorry, I encountered an error generating a response. Please try again."}
         
-        # Build graph with async nodes
+        # Build graph
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)
         graph_builder.add_node("retrieve", retrieve_hybrid)
@@ -480,30 +513,20 @@ class RAGEngine:
         graph_builder.add_edge("generate", END)
         
         self.graph = graph_builder.compile()
-        logger.info("✓  graph compiled")
-
+        logger.info("✓ Graph compiled")
+    
     async def query(
         self,
         question: str,
         conversation_history: str = ""
     ) -> Dict[str, Any]:
-        """
-        Execute fully async RAG query.
-        
-        Args:
-            question: User's question
-            conversation_history: Formatted conversation history
-            
-        Returns:
-            Dict with answer, enhanced_query, retrieved_docs, etc.
-        """
+        """Execute fully async RAG query."""
         input_state = {
             "question": question,
             "conversation_history": conversation_history
         }
         
         try:
-            # graph execution
             result = await asyncio.wait_for(
                 self.graph.ainvoke(input_state),
                 timeout=settings.TOTAL_QUERY_TIMEOUT_SECONDS
@@ -523,13 +546,10 @@ class RAGEngine:
         
         except asyncio.TimeoutError:
             logger.error("Total query timeout", question=question[:50])
-            raise InternalException("query timeout")
-
-        
+            raise InternalException("Query timeout")
         except Exception as e:
-            logger.error("an error occurred", error=str(e), question=question[:50])
-            raise InternalException("an error occurred")
-            
+            logger.error("Query error", error=str(e), question=question[:50])
+            raise InternalException("Query error")
     
     def get_stats(self) -> Dict[str, Any]:
         """Get RAG engine statistics."""
@@ -541,6 +561,10 @@ class RAGEngine:
             "memory_enabled": settings.ENABLE_CONVERSATION_MEMORY,
             "max_history_messages": settings.MEMORY_MAX_MESSAGES,
             "async": True,
+            "thread_pool": {
+                "ELASTIC_SEARCH_WORKERS": settings.ELASTIC_SEARCH_WORKERS,
+                "cpu_workers": _cpu_executor._max_workers if _cpu_executor else 0,
+            },
             "timeouts": {
                 "llm": settings.LLM_TIMEOUT_SECONDS,
                 "retrieval": settings.RETRIEVAL_TIMEOUT_SECONDS,
@@ -549,7 +573,15 @@ class RAGEngine:
         }
 
 
-
 def create_rag_engine() -> RAGEngine:
     """Factory function to create RAG engine."""
     return RAGEngine()
+
+
+async def cleanup_rag_engine():
+    """Cleanup thread pools on shutdown."""
+    if _search_executor:
+        _search_executor.shutdown(wait=False)
+    if _cpu_executor:
+        _cpu_executor.shutdown(wait=False)
+    logger.info("RAG engine executors cleaned up")

@@ -1,21 +1,19 @@
 # app/core/database.py
 """
-Database configuration with async support.
+Async Database Configuration for SQLAlchemy 2.0
 
-Uses sync SQLAlchemy with executor wrapper for non-blocking operations.
-This approach is production-proven and requires minimal code changes.
 """
 
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
-from typing import Generator, AsyncGenerator, Callable, TypeVar
-from functools import wraps
-
-from sqlalchemy import create_engine, event
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import QueuePool
+from typing import AsyncGenerator
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker,
+    AsyncEngine
+)
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.pool import QueuePool, NullPool
 import redis.asyncio as aioredis
 import structlog
 
@@ -24,121 +22,90 @@ from app.config import settings
 logger = structlog.get_logger()
 
 # =============================================================================
-# THREAD POOL FOR DB OPERATIONS
+# DATABASE URLs
 # =============================================================================
 
-# Dedicated thread pool for DB operations (separate from default)
-_db_executor = ThreadPoolExecutor(
-    max_workers=settings.DB_POOL_SIZE,
-    thread_name_prefix="db_worker"
+# Convert sync URL to async URL
+# mysql+pymysql://user:pass@host/db -> mysql+asyncmy://user:pass@host/db
+ASYNC_DATABASE_URL = settings.DATABASE_URL.replace(
+    "mysql+pymysql://", 
+    "mysql+asyncmy://"
+)
+
+# Keep sync URL for Alembic migrations
+SYNC_DATABASE_URL = settings.DATABASE_URL
+
+# =============================================================================
+# ASYNC ENGINE (for application)
+# =============================================================================
+
+async_engine: AsyncEngine = create_async_engine(
+    ASYNC_DATABASE_URL,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=settings.DB_ECHO,
+    # For async, we need to be careful with pool
+    pool_timeout=30,
+)
+
+# Async session factory
+AsyncSessionLocal = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,  # Important: prevents lazy loading issues
+    autocommit=False,
+    autoflush=False,
 )
 
 # =============================================================================
-# MYSQL DATABASE
+# SYNC ENGINE (for Alembic migrations only)
 # =============================================================================
 
-engine = create_engine(
-    settings.DATABASE_URL,
+sync_engine = create_engine(
+    SYNC_DATABASE_URL,
     poolclass=QueuePool,
     pool_pre_ping=True,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW, # max connection allowed
-    pool_recycle=3600,
-    pool_timeout=30,
+    pool_size=5,  # Smaller pool for migrations
+    max_overflow=0,
     echo=settings.DB_ECHO
 )
 
-# Log pool events in debug mode
-if settings.DEBUG:
-    @event.listens_for(engine, "checkout")
-    def receive_checkout(dbapi_connection, connection_record, connection_proxy):
-        logger.debug("DB connection checkout", pool_size=engine.pool.size())
-    
-    @event.listens_for(engine, "checkin")
-    def receive_checkin(dbapi_connection, connection_record):
-        logger.debug("DB connection checkin", pool_size=engine.pool.size())
+SyncSessionLocal = sessionmaker(
+    autocommit=False, 
+    autoflush=False, 
+    bind=sync_engine
+)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# =============================================================================
+# BASE MODEL
+# =============================================================================
+
 Base = declarative_base()
 
 # =============================================================================
-# SYNC DB ACCESS (for FastAPI Depends)
+# ASYNC DATABASE DEPENDENCY (for FastAPI)
 # =============================================================================
 
-def get_db() -> Generator[Session, None, None]:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
-    Get database session (sync generator for FastAPI Depends).
-    
-    Used in FastAPI dependency injection.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-# =============================================================================
-# ASYNC DB WRAPPER
-# =============================================================================
-
-T = TypeVar('T')
-
-
-async def run_sync(func: Callable[..., T], *args, **kwargs) -> T:
-    """
-    Run a sync function in the DB thread pool.
-    
-    This prevents blocking the event loop while waiting for DB operations.
+    Async database session dependency for FastAPI.
     
     Usage:
-        result = await run_sync(db.query(User).filter(...).first)
-        # or
-        result = await run_sync(lambda: db.query(User).all())
+        @router.get("/")
+        async def endpoint(db: AsyncSession = Depends(get_db)):
+            result = await db.execute(select(User))
+            ...
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        _db_executor,
-        lambda: func(*args, **kwargs)
-    )
-
-
-async def run_sync_with_session(func: Callable[[Session], T]) -> T:
-    """
-    Run a sync function with a fresh session in the thread pool.
-    
-    Handles session lifecycle automatically.
-    
-    Usage:
-        users = await run_sync_with_session(lambda db: db.query(User).all())
-    """
-    def _execute():
-        db = SessionLocal()
+    async with AsyncSessionLocal() as session:
         try:
-            return func(db)
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
         finally:
-            db.close()
-    
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_db_executor, _execute)
-
-
-@asynccontextmanager
-async def async_session() -> AsyncGenerator[Session, None]:
-    """
-    Async context manager for database session.
-    
-    Note: Operations inside still need to use run_sync() or be quick.
-    
-    Usage:
-        async with async_session() as db:
-            result = await run_sync(lambda: db.query(User).first())
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        await run_sync(db.close)
+            await session.close()
 
 
 # =============================================================================
@@ -175,17 +142,21 @@ async def close_redis():
 # INITIALIZATION & CLEANUP
 # =============================================================================
 
-def init_db():
-    """Initialize database tables."""
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables initialized")
+def init_db_sync():
+    """
+    Initialize database tables (sync - for startup).
+    
+    Uses sync engine because this runs before the async event loop
+    is fully operational during FastAPI lifespan startup.
+    """
+    Base.metadata.create_all(bind=sync_engine)
+    logger.info("Database tables initialized (sync)")
 
 
 async def close_db():
-    """Close database connections and thread pool."""
-    _db_executor.shutdown(wait=True)
-    engine.dispose()
-    logger.info("Database connections closed")
+    """Close async database connections."""
+    await async_engine.dispose()
+    logger.info("Async database connections closed")
 
 
 async def cleanup_all():
@@ -195,20 +166,20 @@ async def cleanup_all():
 
 
 # =============================================================================
-# HEALTH CHECK
+# HEALTH CHECKS
 # =============================================================================
 
 async def check_db_health() -> dict:
-    """Check database health."""
+    """Check database health using async connection."""
     try:
-        result = await run_sync_with_session(
-            lambda db: db.execute("SELECT 1").scalar()
-        )
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text("SELECT 1"))
+            result.scalar()
+        
         return {
             "status": "healthy",
-            "pool_size": engine.pool.size(),
-            "checked_out": engine.pool.checkedout(),
-            "overflow": engine.pool.overflow()
+            "driver": "asyncmy",
+            "pool_size": settings.DB_POOL_SIZE,
         }
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}

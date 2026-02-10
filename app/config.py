@@ -19,7 +19,10 @@ class Settings(BaseSettings):
     # Server
     HOST: str 
     PORT: int = 8000
-    WORKERS: int 
+    ELASTIC_SEARCH_WORKERS: int
+    PASSWORD_HASH_WORKERS: int
+    CPU_BOUNDED_WORKERS: int
+    
     
     # Security
     SECRET_KEY: str
