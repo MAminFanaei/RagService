@@ -13,7 +13,7 @@ class AdminUserUpdate(BaseModel):
 class UserStatsResponse(BaseModel):
     """Detailed user statistics for admin"""
     id: str
-    email: str
+    email: Optional[str]
     username: Optional[str]
     auth_provider: str
     is_active: bool
@@ -77,8 +77,7 @@ class UserDisableRequest(BaseModel):
 
 class UserDeleteRequest(BaseModel):
     """Request body for permanent user deletion"""
-    admin_password: str 
-    confirm_username: Optional[str]
+    admin_password: str = Field(..., min_length=1, description="Admin's own password for verification")
 
 class UserDeleteResponse(BaseModel):
     message: str
@@ -123,4 +122,4 @@ class AdminPasswordResetResponse(BaseModel):
     """Response for admin password reset."""
     message: str
     user_id: str
-    email: str
+    email: Optional[str]

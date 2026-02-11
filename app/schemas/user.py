@@ -1,28 +1,40 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional
 from datetime import datetime, timedelta, timezone
+from app.exceptions import BadRequestException
 from app.models.user import AuthProvider
 import re
 
 
 class UserBase(BaseModel):
-    email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50)
+    email: Optional[EmailStr] = None
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
     full_name: Optional[str] = None
 
-    @field_validator('email')
+    @field_validator('email', mode='before')
     @classmethod
-    def email_ascii_only(cls, v):
+    def validate_email(cls, v):
+        if not v:
+            return None
         if not v.isascii():
-            raise ValueError('Email must contain only ASCII characters')
+            raise BadRequestException("email must contain only allowed characters (a-z , A-Z, 0-9, and special characters)")
         return v
 
-    @field_validator('username')
+    @field_validator('username', mode='before')
     @classmethod
-    def username_format(cls, v):
+    def validate_username(cls, v):
+        if not v:
+            return None
         if not re.match(r'^[a-zA-Z0-9_-]+$', v):
-            raise ValueError('Username can only contain English letters, numbers, underscores, and hyphens')
+            raise BadRequestException('Username can only contain English letters, numbers, underscores, and hyphens')
         return v
+
+    @model_validator(mode='after')
+    def check_email_or_username(self):
+        if not self.email and not self.username:
+            raise BadRequestException('Either email or username must be provided')
+        return self
+
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6,max_length=128)
@@ -31,13 +43,13 @@ class UserCreate(UserBase):
     @classmethod
     def password_strength(cls, v):
         if not v.isascii():
-            raise ValueError('Password must contain only ASCII characters')
+            raise BadRequestException("Password must contain only allowed characters (a-z , A-Z, 0-9, and special characters)")
         if len(v) < 6:
-            raise ValueError('Password must be at least 8 characters')
+            raise BadRequestException('Password must be at least 6 characters')
         if not re.search(r'[A-Z]', v):
-            raise ValueError('Password must contain at least one uppercase letter')
+            raise BadRequestException('Password must contain at least one uppercase letter')
         if not re.search(r'[0-9]', v):
-            raise ValueError('Password must contain at least one digit')
+            raise BadRequestException('Password must contain at least one digit')
         return v
 
 
@@ -48,8 +60,8 @@ class UserLogin(BaseModel):
 class UserResponse(UserBase):
     id: Optional[str] = None
     auth_provider: Optional[AuthProvider] = None
-    email: Optional[str] = None
-    username: str
+    email: Optional[EmailStr] = None      # was EmailStr (required)
+    username: Optional[str] = None 
     is_active: Optional[bool] = None
     is_admin: bool  # Required - no default
     is_verified: Optional[bool] = None
@@ -84,29 +96,29 @@ class PasswordChangeRequest(BaseModel):
     @classmethod
     def password_strength(cls, v):
         if not v.isascii():
-            raise ValueError('Password must contain only allowed characters (a-z , A-Z, 0-9, and special characters)')
+            raise BadRequestException('Password must contain only allowed characters (a-z , A-Z, 0-9, and special characters)')
         if len(v) < 6:
-            raise ValueError('Password must be at least 8 characters')
+            raise BadRequestException('Password must be at least 8 characters')
         if not re.search(r'[A-Z]', v):
-            raise ValueError('Password must contain at least one uppercase letter')
+            raise BadRequestException('Password must contain at least one uppercase letter')
         if not re.search(r'[0-9]', v):
-            raise ValueError('Password must contain at least one digit')
+            raise BadRequestException('Password must contain at least one digit')
         return v
 
 
 class ProfileUpdateRequest(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=50)
-    full_name: Optional[str] = Field(None, min_length=3, max_length=100)
+    full_name: Optional[str] = Field(None, max_length=100)
     avatar_url: Optional[str] = None
-    
-    @field_validator('username')
-    @classmethod
-    def username_alphanumeric(cls, v):
-        if v is not None:
-            if not re.match(r'^[a-zA-Z0-9_-]+$', v):
-                raise ValueError('Username can only contain English letters, numbers, underscores, and hyphens')
-        return v
 
+    @field_validator('username', mode='before')
+    @classmethod
+    def validate_username(cls, v):
+        if not v:
+            return None
+        if not re.match(r'^[a-zA-Z0-9_-]+$', v):
+            raise ValueError('Username can only contain English letters, numbers, underscores, and hyphens')
+        return v
 
 # ─────────────────────────────────────────────────────────────
 # Profile Update Schemas
@@ -120,13 +132,13 @@ class PasswordChangeResponse(SuccessResponse):
     pass # same as "SuccessResponse"
 class EmailChangeRequest(BaseModel):
     new_email: EmailStr
-    password: str  #
-    
-    @field_validator('new_email')
+    password: str
+
+    @field_validator('new_email', mode='before')
     @classmethod
-    def email_ascii_only(cls, v):
+    def validate_email(cls, v):
         if not v.isascii():
-            raise ValueError('Email must contain only allowed characters , (a-z , A-Z, 0-9, and special characters)')
+            raise BadRequestException("Email must contain only allowed characters (a-z , A-Z, 0-9, and special characters)")
         return v
 class EmailChangeResponse(BaseModel):
     message: str

@@ -117,9 +117,9 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def create_token_pair(user_id: str, email: str, is_admin: bool = False) -> Dict[str, str]:
+def create_token_pair(user_id: str, email: str = None, username: str = None, is_admin: bool = False) -> Dict[str, str]:
     """Create access and refresh token pair."""
-    token_data = {"sub": user_id, "email": email, "is_admin": is_admin}
+    token_data = {"sub": user_id, "email": email, "username": username, "is_admin": is_admin}
     return {
         "access_token": create_access_token(token_data),
         "refresh_token": create_refresh_token(token_data),

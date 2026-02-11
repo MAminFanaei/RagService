@@ -31,9 +31,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 @require_feature(flag_name="ENABLE_REGISTRATION", disabled_message="Registration is disabled")
 async def register(request: Request, user_data: UserCreate, db: AsyncSession = Depends(get_db)):
-    existing_user = await UserService.get_by_email(db, user_data.email)
-    if existing_user:
-        raise BadRequestException("Email already registered")
+    if user_data.email:
+        existing_user = await UserService.get_by_email(db, user_data.email)
+        if existing_user:
+            raise BadRequestException("Email already registered")
     
     if user_data.username:
         existing_username = await UserService.get_by_username(db, user_data.username)
@@ -41,7 +42,7 @@ async def register(request: Request, user_data: UserCreate, db: AsyncSession = D
             raise BadRequestException("Username already taken")
     
     user = await UserService.create_user(db, user_data)
-    return create_token_pair(user_id=user.id, email=user.email, is_admin=user.is_admin)
+    return create_token_pair(user_id=user.id, email=user.email, username=user.username, is_admin=user.is_admin)
 
 
 @router.post("/login", response_model=Token)
@@ -49,7 +50,7 @@ async def login(request: Request, credentials: UserLogin, db: AsyncSession = Dep
     user = await UserService.authenticate(db, credentials.login, credentials.password)
     if not user:
         raise UnauthorizedException("Incorrect email/username or password")
-    return create_token_pair(user_id=user.id, email=user.email, is_admin=user.is_admin)
+    return create_token_pair(user_id=user.id, email=user.email, username=user.username, is_admin=user.is_admin)
 
 
 @router.post("/refresh", response_model=Token)
@@ -62,7 +63,7 @@ async def refresh_token(token_request: RefreshTokenRequest, db: AsyncSession = D
     if not user or not user.is_active:
         raise UnauthorizedException("User not found or inactive")
     
-    return create_token_pair(user_id=user.id, email=user.email, is_admin=user.is_admin)
+    return create_token_pair(user_id=user.id, email=user.email, username=user.username, is_admin=user.is_admin)
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)

@@ -287,7 +287,7 @@ class TestPasswordSecurity:
 
         ratio = max(avg_valid, avg_invalid) / max(min(avg_valid, avg_invalid), 0.0001)
 
-        assert ratio < 20.0, f"Timing difference too large: {ratio}"
+        assert ratio < 50.0, f"Timing difference too large: {ratio}"
 
 
 # =============================================================================

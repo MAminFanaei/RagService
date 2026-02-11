@@ -185,8 +185,6 @@ async def delete_user_permanently(user_id: str, request: UserDeleteRequest, curr
     user_to_delete = await UserService.get_by_id(db, user_id)
     if not user_to_delete:
         raise NotFoundException("User not found")
-    if user_to_delete.username.lower() != request.confirm_username.lower():
-        raise BadRequestException("Confirmation username does not match")
     
     stats = await UserService.delete_user_permanently(db, user_id)
     return {"message": "User permanently deleted", "user_id": user_id, "chats_deleted": stats["chats_deleted"], "messages_deleted": stats["messages_deleted"]}
@@ -227,13 +225,14 @@ async def admin_reset_user_password(
     logger.info(
         "Admin reset user password",
         admin_id=current_admin.id,
-        admin_email=current_admin.email,
+        admin_email=current_admin.email or "no email available",
         target_user_id=target_user.id,
-        target_user_email=target_user.email
+        target_user_email=target_user.email or "no email available",
+        target_user_username=target_user.username  or "no username available"
     )
     
     return AdminPasswordResetResponse(
         message="Password reset successfully",
-        user_id=target_user.username,
-        email=target_user.email
+        username=target_user.username or target_user.id,
+        email=target_user.email or ""
     )

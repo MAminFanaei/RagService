@@ -210,7 +210,7 @@ class TestInjectionSecurity:
             },
         )
         # Should be rejected by username validation (alphanumeric only)
-        assert response.status_code == 422
+        assert response.status_code in (400, 422)
 
     @pytest.mark.asyncio
     async def test_oversized_message_rejected(self, client, auth_headers, test_chat):
