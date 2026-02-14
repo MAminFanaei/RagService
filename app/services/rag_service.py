@@ -10,7 +10,7 @@ import time
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
-
+from fastapi import Request
 from app.exceptions import BadRequestException
 from app.services.chat_service import ChatService
 from app.services.memory_service import memory_service, ConversationContext
@@ -37,7 +37,7 @@ class RAGService:
         
         All database operations are now async.
         """
-        # Verify chat ownership - ASYNC
+        # Verify chat ownership 
         chat = await ChatService.get_chat(db, chat_id, user_id)
         if not chat:
             raise BadRequestException("Chat not found or unauthorized")
@@ -45,7 +45,7 @@ class RAGService:
         start_time = time.time()
         
         # =====================================================================
-        # STEP 1: Load Conversation History - ASYNC
+        # STEP 1: Load Conversation History 
         # =====================================================================
         conversation_history = ""
         context_info = {
@@ -82,7 +82,7 @@ class RAGService:
                     logger.info(f"RAGService: Failed to load conversation history: {e}")
         
         # =====================================================================
-        # STEP 2: Execute RAG Query with History (already async)
+        # STEP 2: Execute RAG Query with History
         # =====================================================================
         rag_result = await rag_engine.query(
             question=question,
@@ -92,7 +92,7 @@ class RAGService:
         processing_time = (time.time() - start_time) * 1000
         
         # =====================================================================
-        # STEP 3: Save Messages to Database - ASYNC
+        # STEP 3: Save Messages to Database 
         # =====================================================================
         user_message = await ChatService.add_message(
             db=db,
@@ -122,7 +122,7 @@ class RAGService:
             db=db,
             chat_id=chat_id,
             role=MessageRole.ASSISTANT,
-            content=rag_result.get("answer", "I don't know"),
+            content=rag_result.get("answer", "Empty response"),
             usage=rag_result.get("usage"),
             metadata=assistant_metadata
         )
@@ -145,7 +145,6 @@ class RAGService:
     @staticmethod
     def get_rag_stats() -> Dict[str, Any]:
         """Get RAG engine statistics."""
-        from fastapi import Request
         try:
             stats = Request.app.state.rag_engine.get_stats()
             stats["status"] = "healthy"

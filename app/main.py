@@ -24,7 +24,7 @@ from app.middleware.error_handler import setup_exception_handlers
 from app.services.user_service import UserService
 from app.models.user import User, AuthProvider
 from app.core.security import get_password_hash
-from profiling.middleware_timing import TimingMiddleware
+from app.middleware.process_timing import TimingMiddleware
 
 multiprocessing.set_start_method('spawn', force=True)  # Required for CUDA compatibility
 logging.basicConfig(
@@ -100,8 +100,8 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None
 )
 
-app.add_middleware(TimingMiddleware)
-# Initialize rate limiter
+if settings.DEBUG :
+    app.add_middleware(TimingMiddleware) # shows process timing
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

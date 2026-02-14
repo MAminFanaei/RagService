@@ -11,6 +11,8 @@ from typing import Callable
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 import structlog
+from functools import wraps
+import asyncio
 
 logger = structlog.get_logger()
 
@@ -56,7 +58,9 @@ class TimingMiddleware(BaseHTTPMiddleware):
                 "Request completed",
                 path=request.url.path,
                 method=request.method,
-                time_ms=f"{total_time:.2f}"
+                time_ms=f"{total_time:.2f}",
+                checkpoints=getattr(request.state, 'timing', {}).get('checkpoints', [])
+
             )
         
         return response
@@ -88,10 +92,6 @@ def add_checkpoint(request: Request, name: str):
 # ============================================================================
 # DETAILED ENDPOINT PROFILER (decorator version)
 # ============================================================================
-
-from functools import wraps
-import asyncio
-
 
 def profile_endpoint(func):
     """
@@ -155,48 +155,3 @@ class ProfileBlock:
             self.request.state.profile_timings[self.name] = elapsed
         
         add_checkpoint(self.request, f"{self.name}: {elapsed:.1f}ms")
-
-
-# ============================================================================
-# INTEGRATION EXAMPLE
-# ============================================================================
-
-INTEGRATION_EXAMPLE = '''
-# In app/main.py, add:
-
-from profiling.middleware_timing import TimingMiddleware
-
-app = FastAPI(...)
-app.add_middleware(TimingMiddleware)  # Add this line
-
-
-# In app/api/v1/chats.py, for detailed profiling:
-
-from profiling.middleware_timing import ProfileBlock, add_checkpoint
-
-@router.post("/{chat_id}/messages")
-async def send_message(
-    chat_id: str,
-    message: MessageCreate,
-    request: Request,  # Add Request parameter
-    ...
-):
-    add_checkpoint(request, "start")
-    
-    # Rate limit check
-    async with ProfileBlock(request, "rate_limit"):
-        # rate limit code...
-        pass
-    
-    # RAG query
-    async with ProfileBlock(request, "rag_query"):
-        result = await RAGService.process_query(...)
-    
-    add_checkpoint(request, "end")
-    return result
-'''
-
-if __name__ == "__main__":
-    print("This module provides timing middleware for FastAPI.")
-    print("\nIntegration example:")
-    print(INTEGRATION_EXAMPLE)

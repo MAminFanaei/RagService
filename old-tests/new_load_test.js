@@ -1,3 +1,5 @@
+// BASE_URL=http://localhost:8000 k6 run --vus 10 --duration 30s ./new_load_test.js
+
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { SharedArray } from 'k6/data';

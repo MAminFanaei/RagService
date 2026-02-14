@@ -8,9 +8,9 @@ services:
   #   #   dockerfile: Dockerfile
   #   image: rag_service_app:latest
   #   container_name: rag_service_app
-  #   ports:
-  #     - "8000:8000"
-  ##     - "127.0.0.1:8000:8000"
+  ##   ports:
+  # #    - "8000:8000" # dont use it since we are using nginx
+  # #     - "127.0.0.1:8000:8000"
 
   #   environment:
   #     - DATABASE_URL=${DATABASE_URL}
@@ -33,7 +33,7 @@ services:
   #         exec gunicorn app.main:app
   #         --worker-class uvicorn.workers.UvicornWorker
   #         --workers 1
-  #         --bind 0.0.0.0:8000
+  #         #--bind 0.0.0.0:8000 # we are using nginx
   #         --worker-connections 500
   #         --timeout 30
   #         --keep-alive 2
@@ -61,6 +61,7 @@ services:
   #   networks:
   #     - rag_network
   #   deploy: # 🔴 VPS is cpu only
+  #     replicas: 1
   #     resources:
   #       reservations:
   #         devices:
@@ -130,6 +131,16 @@ services:
     restart: unless-stopped
     # networks:
     #   - rag_network
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    restart: unless-stopped
 
 volumes:
   mysql_data: 

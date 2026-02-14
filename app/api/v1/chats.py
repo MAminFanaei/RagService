@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import time
 import redis.asyncio as aioredis
 import structlog
-from profiling.middleware_timing import ProfileBlock, add_checkpoint
 from app.core.database import get_db
 from app.exceptions import (
     ForbiddenException, InputTooLongException, InternalException, 
@@ -196,6 +195,7 @@ async def send_message(
     content_length = len(message.content)
     max_length = settings.MAX_QUESTION_LENGTH
     
+
     if content_length > max_length:
         raise InputTooLongException(
             max_length=max_length,
