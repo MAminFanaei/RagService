@@ -7,6 +7,7 @@ All endpoints now use AsyncSession and await service calls.
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.memory_service import memory_service
 import time
 import redis.asyncio as aioredis
 import structlog
@@ -192,8 +193,8 @@ async def send_message(
     redis: aioredis.Redis = Depends(get_redis_client)
 ):
     """Send a message and get RAG response."""
-    content_length = len(message.content)
-    max_length = settings.MAX_QUESTION_LENGTH
+    content_length = len(message.content) * 4
+    max_length = settings.USER_QUERY_LENGTH_LIMIT
     
 
     if content_length > max_length:
@@ -284,7 +285,6 @@ async def get_chat_memory(
     if not chat:
         raise NotFoundException("Chat not found")
     
-    from app.services.memory_service import memory_service
     
     if not settings.ENABLE_CONVERSATION_MEMORY:
         return {
@@ -308,7 +308,7 @@ async def get_chat_memory(
     
     formatted_for_answer = None
     if context.has_history:
-        formatted_for_answer = memory_service.format_for_answer_generation(context)
+        formatted_for_answer = memory_service.format_for_endpoint(context)
     
     return {
         "status": "ok",

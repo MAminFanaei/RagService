@@ -92,10 +92,12 @@ class Settings(BaseSettings):
     ENABLE_CONVERSATION_MEMORY: bool = True
     # How many previous messages to include in context
     MEMORY_MAX_MESSAGES: int = 10  # 5 turns (user + assistant each)
+    ENHANCER_MEMORY : int
+    GENERATOR_MEMORY : int
     # Max tokens for conversation history (approximate)
     MEMORY_MAX_TOKENS: int = 2000
     # Use Redis for caching active conversations
-    MAX_QUESTION_LENGTH: int = 5000  
+    USER_QUERY_LENGTH_LIMIT: int = 5000  
 
     # ASYNC & TIMEOUT SETTINGS
     LLM_TIMEOUT_SECONDS: int = 100

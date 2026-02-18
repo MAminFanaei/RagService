@@ -65,7 +65,7 @@ class RAGService:
                 )
                 
                 if context.has_history:
-                    conversation_history = memory_service.format_for_answer_generation(context)
+                    conversation_history = memory_service.format_for_graph(context)
                     
                     context_info.update({
                         "history_loaded": True,
@@ -104,6 +104,7 @@ class RAGService:
         )
         
         assistant_metadata = {
+            "resolved_query": rag_result.get("resolved_query"),
             "enhanced_query": rag_result.get("enhanced_query"),
             "docs_retrieved": len(rag_result.get("retrieved_docs", [])),
             "processing_time_ms": processing_time,

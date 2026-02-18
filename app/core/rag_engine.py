@@ -9,10 +9,11 @@ So we run the full similarity_search(query) in a thread pool instead.
 import asyncio
 import os
 import re
-from typing import Dict, Any, List, Optional
+import json
+from typing import Dict, Any, List, Optional , Literal
 from concurrent.futures import ThreadPoolExecutor
 import structlog
-
+from aiohttp import ServerDisconnectedError, ClientError
 from langchain_core.documents import Document as LangChainDocument
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
@@ -91,8 +92,16 @@ def sanitize_user_input(text: str) -> str:
 class State(TypedDict):
     """State for LangGraph pipeline"""
     question: str
-    conversation_history: str
-    enhanced_query: str
+    conversation_history: List[str]
+    
+    # --- ADD THESE MISSING FIELDS ---
+    enhancement_status: Optional[str] # "ACCEPTED" or "REJECTED"
+    rejection_reason: Optional[str]
+    resolved_query: Optional[str]
+    keywords: Optional[List[str]]
+    # --------------------------------
+    
+    enhanced_query: Optional[str]
     docs: List[LangChainDocument]
     answer: str
 
@@ -287,46 +296,64 @@ class Retriever:
             logger.error("Reranking failed", error=str(e))
             return candidates[:self.output_k]
 
-
 class LLMClient:
-    """Async wrapper for Google GenAI."""
+    """
+    Two sync clients + one thread pool.
+    Sync SDK uses httpx (5s keepalive) → no stale connections.
+    Thread pool keeps FastAPI async.
+    """
     
     def __init__(self, api_key: str, base_url: str):
-        self.client = genai.Client(
-            api_key=api_key,
-            http_options={"base_url": base_url}
-        )
-        logger.info("LLMClient initialized")
+        opts = {"base_url": base_url}
+        
+        self.clients = {
+            "enhancer": genai.Client(api_key=api_key, http_options=opts),
+            "generator": genai.Client(api_key=api_key, http_options=opts),
+        }
+        
+        self.timeouts = {
+            "enhancer": 30,
+            "generator": 90,
+        }
+        
+        self._pool = ThreadPoolExecutor(max_workers=250, thread_name_prefix="llm")
+        logger.info("✓ LLMClient ready")
     
     async def generate(
         self,
         model: str,
         system_instruction: str,
         content: str,
-        temperature: float = 0.2,
-        top_p: float = 0.7
+        temperature: float,
+        top_p: float,
+        role: str = "generator",
+        thinking_budget: int = 0,
     ) -> str:
-        """Async LLM generation with timeout."""
-        try:
-            response = await asyncio.wait_for(
-                self.client.aio.models.generate_content(
-                    model=model,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=temperature,
-                        top_p=top_p
-                    ),
-                    contents=content,
-                ),
-                timeout=settings.LLM_TIMEOUT_SECONDS
+        client = self.clients[role]
+        
+        def _call():
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=temperature,
+                top_p=top_p,
             )
-            return response.text.strip()
-        except asyncio.TimeoutError:
-            logger.error("LLM generation timed out", model=model)
-            raise TimeoutError(f"LLM generation timed out after {settings.LLM_TIMEOUT_SECONDS}s")
-        except Exception as e:
-            logger.error("LLM generation failed", error=str(e), model=model)
-            raise
+            if thinking_budget > 0:
+                config.thinking_config = types.ThinkingConfig(
+                    thinking_budget=thinking_budget
+                )
+            
+            return client.models.generate_content(
+                model=model, config=config, contents=content
+            ).text.strip()
+        
+        loop = asyncio.get_running_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(self._pool, _call),
+            timeout=self.timeouts[role],
+        )
+    
+    def shutdown(self):
+        self._pool.shutdown(wait=False)
 
 
 class RAGEngine:
@@ -349,6 +376,22 @@ class RAGEngine:
             self._init_rag()
             RAGEngine._initialized = True
     
+    def _parse_json_response(self, response_text: str) -> dict:
+        """Helper to extract and parse JSON from LLM response."""
+        try:
+            # Remove markdown code blocks if present
+            cleaned = re.sub(r'```json\s*', '', response_text)
+            cleaned = re.sub(r'```', '', cleaned)
+            return json.loads(cleaned.strip())
+        except Exception:
+            # Fallback if parsing fails - assume accepted but use raw query
+            return {
+                "status": "ACCEPTED",
+                "resolved_query": "",
+                "enhanced_query": response_text,
+                "keywords": []
+            }
+        
     def _init_rag(self):
         """Initialize RAG components."""
         logger.info("Initializing RAG Engine...")
@@ -396,7 +439,7 @@ class RAGEngine:
                 self.es_store.client.indices.delete(index=settings.ELASTICSEARCH_INDEX_NAME)
                 logger.info("Old documents erased", index=settings.ELASTICSEARCH_INDEX_NAME)
             except Exception as e:
-                logger.debug("Index delete skipped", error=str(e))
+                logger.info("Index delete skipped", error=str(e))
             finally:
                 self.es_store.add_documents(self.docs)
                 logger.info(f"✓ Indexed {len(self.docs)} documents")
@@ -424,43 +467,90 @@ class RAGEngine:
         self._build_graph()
         logger.info("✓ RAG Engine initialized successfully")
     
+
     def _build_graph(self):
         """Build LangGraph workflow with async nodes."""
         engine = self
         
+    
         async def enhance_query(state: State) -> Dict:
             """Query enhancement node."""
             if DEBUG_MOD:
-                logger.debug("Graph: Enhancing query")
+                logger.info("Graph: Enhancing query")
             
             question = sanitize_user_input(state["question"])
-            
+
+            if settings.ENABLE_CONVERSATION_MEMORY:
+                conversation_history = state.get("conversation_history", "No previous context.")
+                short_history_list = conversation_history[-settings.ENHANCER_MEMORY:] if conversation_history else []
+                conversation_history = "\n".join(short_history_list) if short_history_list else "No previous context."
+            else:
+                conversation_history = "No history given - consider this your first message with the user"
+
             instruction = QUERY_ENHANCEMENT_PROMPT.invoke({
-                "maxtoken": settings.ENHANCER_OUTPUT_TOKEN
+                "maxtoken": str(settings.ENHANCER_OUTPUT_TOKEN),
+                "conversation_history": conversation_history
             })
             
             if not settings.LLM_TURNED_ON:
-                return {"enhanced_query": question}
+                return {
+                    "enhancement_status": "ACCEPTED",
+                    "enhanced_query": question,
+                    "resolved_query": "",
+                    "keywords": []
+                }
             
             try:
-                enhanced = await engine.llm.generate(
+                raw_response  = await engine.llm.generate(
                     model=settings.QUERY_ENHANCER_MODEL_NAME,
                     system_instruction=instruction,
-                    content=f"<user_query>{question}</user_query>",
-                    temperature=0.2,
-                    top_p=0.7
+                    content=f"<user_input>{question}</user_input>",
+                    temperature=0.1,
+                    top_p=0.5,
+                    role="enhancer",
+                    thinking_budget=settings.ENHANCER_THINKING_BUDGET,
                 )
-                return {"enhanced_query": enhanced}
+                data = engine._parse_json_response(raw_response)
+
+                if data.get("status") == "REJECTED":
+                    return {
+                        "enhancement_status": "REJECTED",
+                        "rejection_reason": data.get("reason", "Query rejected by domain filter.")
+                    }
+                else:
+                    return {
+                        "enhancement_status": "ACCEPTED",
+                        "enhanced_query": data.get("enhanced_query", question),
+                        "resolved_query": data.get("resolved_query", ""),
+                        "keywords": data.get("keywords", [])
+                    }
+                
             except Exception as e:
-                logger.error("Query enhancement failed, using original", error=str(e))
-                return {"enhanced_query": question}
+                logger.error("Query enhancement CRASHED", error=str(e))
+                # Fallback to original question so the user still gets an answer.
+                return {
+                    "enhancement_status": "REJECTED", # Pretend it worked so we still search
+                    "rejection_reason": "server had some trouble - Query enhancement CRASHED",       # Fallback to raw user input
+                }
+            
+        def route_query(state: State) -> Literal["retrieve", "end"]:
+            """Conditional Edge."""
+            # Default to retrieve if status is missing/null
+            status = state.get("enhancement_status", "ACCEPTED")
+            if status == "REJECTED":
+                return "end"
+            return "retrieve"
         
         async def retrieve_hybrid(state: State) -> Dict:
             """Hybrid retrieval node."""
-            query = state.get("enhanced_query", state["question"])
-            docs = await engine.retriever.retrieve(query)
+            query = state.get("enhanced_query") or state.get("resolved_query") or state["question"]
+            keywords = state.get("keywords", [])
+            if keywords and isinstance(keywords, list):
+                keywords = " ".join(keywords)
+
+            docs = await engine.retriever.retrieve(query + keywords)
             if DEBUG_MOD:
-                logger.debug(f"Retrieved {len(docs)} documents")
+                logger.info(f"Retrieved {len(docs)} documents")
             return {"docs": docs}
         
         async def generate_answer(state: State) -> Dict:
@@ -473,34 +563,45 @@ class RAGEngine:
                 ])
             else:
                 docs_content = "internal Error - NO Document Retrieved!"
+
+            resolved_query = state.get("resolved_query", "")
             
             if settings.ENABLE_CONVERSATION_MEMORY:
-                conversation_history = state.get("conversation_history", "")
+                conversation_history = state.get("conversation_history", "No previous context.")
+                short_history_list = conversation_history[-settings.GENERATOR_MEMORY:] if conversation_history else []
+                conversation_history = "\n".join(short_history_list) if short_history_list else "No previous context."
             else:
-                conversation_history = "No history given"
+                conversation_history = "No history given - consider this your first message with the user"
             
             instruction = ANSWER_GENERATION_PROMPT.invoke({
                 "context": docs_content,
                 "maxtoken": settings.ANSWER_LLM_OUTPUT_TOKEN,
-                "conversation_history": conversation_history
+                "conversation_history": conversation_history,
+                "resolved_query": resolved_query
             })
             
             if not settings.LLM_TURNED_ON:
                 return {"answer": test_message_collection.test_message_2}
             
-            try:
-                answer = await engine.llm.generate(
-                    model=settings.ANSWER_GENERATOR_MODEL_NAME,
-                    system_instruction=instruction,
-                    content=f"<user_query>{question}</user_query>",
-                    temperature=0.1,
-                    top_p=0.9
-                )
-                return {"answer": answer}
-            except Exception as e:
-                logger.error("Answer generation failed", error=str(e))
-                return {"answer": "I'm sorry, I encountered an error generating a response. Please try again."}
-        
+            # In generate_answer node:
+            for attempt in range(3):
+                try:
+                    answer = await engine.llm.generate(
+                        model=settings.ANSWER_GENERATOR_MODEL_NAME,
+                        system_instruction=instruction,
+                        content=f"<user_input>{question}</user_input>",
+                        temperature=0.2,
+                        top_p=0.9,
+                        role="generator",
+                        thinking_budget=settings.GENERATOR_THINKING_BUDGET,
+                    )
+                    return {"answer": answer}
+                except Exception as e:
+                    if attempt == 2:
+                        logger.error("Answer generation failed", error=str(e))
+                        return {"answer": "I'm sorry, I encountered an error."}
+                    await asyncio.sleep(1)
+                    
         # Build graph
         graph_builder = StateGraph(State)
         graph_builder.add_node("enhance_query", enhance_query)
@@ -508,7 +609,14 @@ class RAGEngine:
         graph_builder.add_node("generate", generate_answer)
         
         graph_builder.add_edge(START, "enhance_query")
-        graph_builder.add_edge("enhance_query", "retrieve")
+        graph_builder.add_conditional_edges(
+            "enhance_query",
+            route_query,
+            {
+                "retrieve": "retrieve",
+                "end": END
+            }
+        )
         graph_builder.add_edge("retrieve", "generate")
         graph_builder.add_edge("generate", END)
         
@@ -518,7 +626,7 @@ class RAGEngine:
     async def query(
         self,
         question: str,
-        conversation_history: str = ""
+        conversation_history: List[str] = ""
     ) -> Dict[str, Any]:
         """Execute fully async RAG query."""
         input_state = {
@@ -532,15 +640,23 @@ class RAGEngine:
                 timeout=settings.TOTAL_QUERY_TIMEOUT_SECONDS
             )
             
-            return {
-                "question": result.get("question"),
-                "enhanced_query": result.get("enhanced_query"),
-                "answer": result.get("answer"),
-                "usage": {},
-                "retrieved_docs": [
+            if result.get("enhancement_status") == "REJECTED":
+                final_answer = result.get("rejection_reason", "answer rejected.")
+                retrieved_docs = []
+            else:
+                final_answer = result.get("answer")
+                retrieved_docs = [
                     {"content": doc.page_content, "metadata": doc.metadata}
                     for doc in result.get("docs", [])
-                ],
+                ]
+
+            return {
+                "question": result.get("question"),
+                "resolved_query": result.get("resolved_query"),
+                "enhanced_query": result.get("enhanced_query"),
+                "answer": final_answer,
+                "usage": {},
+                "retrieved_docs": retrieved_docs,
                 "had_conversation_context": bool(conversation_history)
             }
         

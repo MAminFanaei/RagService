@@ -209,7 +209,24 @@ class ConversationMemoryService:
         
         return result
 
-    def format_for_answer_generation(self, context: ConversationContext) -> str:
+    def format_for_graph(self, context: ConversationContext) -> List[str]:
+        """Format conversation context as a list for flexible slicing."""
+        if not context.has_history:
+            return [] # Return empty list, not empty string
+        
+        messages = self.truncate_to_token_limit(
+            context.messages,
+            self.max_tokens
+        )
+        
+        parts = []
+        for msg in messages:
+            role = "User" if msg.role == "user" else "Assistant"
+            parts.append(f"{role}: {msg.content}")
+        
+        return parts
+    
+    def format_for_endpoint(self, context: ConversationContext) -> str:
         """Format conversation context for answer generation."""
         if not context.has_history:
             return ""
