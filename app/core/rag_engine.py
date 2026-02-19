@@ -489,7 +489,6 @@ class RAGEngine:
 
             instruction = QUERY_ENHANCEMENT_PROMPT.invoke({
                 "maxtoken": str(settings.ENHANCER_OUTPUT_TOKEN),
-                "conversation_history": conversation_history
             })
             
             if not settings.LLM_TURNED_ON:
@@ -504,7 +503,7 @@ class RAGEngine:
                 raw_response  = await engine.llm.generate(
                     model=settings.QUERY_ENHANCER_MODEL_NAME,
                     system_instruction=instruction,
-                    content=f"<user_input>{question}</user_input>",
+                    content=f"<user_input>{question}</user_input> \n\n <Conversation_History>{conversation_history}</Conversation_History>",
                     temperature=0.1,
                     top_p=0.5,
                     role="enhancer",
@@ -563,21 +562,17 @@ class RAGEngine:
                 ])
             else:
                 docs_content = "internal Error - NO Document Retrieved!"
-
-            resolved_query = state.get("resolved_query", "")
             
             if settings.ENABLE_CONVERSATION_MEMORY:
-                conversation_history = state.get("conversation_history", "No previous context.")
-                short_history_list = conversation_history[-settings.GENERATOR_MEMORY:] if conversation_history else []
-                conversation_history = "\n".join(short_history_list) if short_history_list else "No previous context."
+                conversation_history = state.get("conversation_history", "")[-settings.GENERATOR_MEMORY:]
+                conversation_history = "\n".join(conversation_history) if conversation_history else "No history given - consider this your first message with the user"
             else:
                 conversation_history = "No history given - consider this your first message with the user"
             
+            resolved_query = state.get("resolved_query", "")
+
             instruction = ANSWER_GENERATION_PROMPT.invoke({
-                "context": docs_content,
-                "maxtoken": settings.ANSWER_LLM_OUTPUT_TOKEN,
-                "conversation_history": conversation_history,
-                "resolved_query": resolved_query
+                "maxtoken": settings.ANSWER_LLM_OUTPUT_TOKEN
             })
             
             if not settings.LLM_TURNED_ON:
@@ -589,7 +584,7 @@ class RAGEngine:
                     answer = await engine.llm.generate(
                         model=settings.ANSWER_GENERATOR_MODEL_NAME,
                         system_instruction=instruction,
-                        content=f"<user_input>{question}</user_input>",
+                        content=f"<user_input>{question}</user_input>\n\n<resolved_query>{resolved_query}</resolved_query>\n\n<Conversation_History>{conversation_history}</Conversation_History>\n\n <Retrieved_Documents>{docs_content}</Retrieved_Documents>",
                         temperature=0.2,
                         top_p=0.9,
                         role="generator",

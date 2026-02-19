@@ -112,10 +112,10 @@ class RAGService:
             "context_messages_used": context_info.get("messages_in_context", 0),
             "retrieved_docs": [
                 {
-                    "content_preview": doc["content"][:500],
+                    "content_preview": doc["content"],
                     "metadata": dict(doc["metadata"]) if doc.get("metadata") else {}
                 }
-                for doc in rag_result.get("retrieved_docs", [])[:5]
+                for doc in rag_result.get("retrieved_docs", [])
             ]
         }
         
