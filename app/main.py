@@ -100,7 +100,7 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None
 )
 
-if settings.DEBUG :
+if settings.PROCESS_TIMING_ENABLE :
     app.add_middleware(TimingMiddleware) # shows process timing
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter

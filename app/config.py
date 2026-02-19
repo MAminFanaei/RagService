@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     DB_ECHO : bool = False
+    PROCESS_TIMING_ENABLE : bool
     ENVIRONMENT: str = "production"
     INDEX_THE_DOCS : bool = True
     LLM_TURNED_ON : bool = True

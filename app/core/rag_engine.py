@@ -5,7 +5,8 @@ Fully Async RAG Engine - CORRECT VERSION
 Key insight: similarity_search_by_vector is NOT IMPLEMENTED in langchain_elasticsearch!
 So we run the full similarity_search(query) in a thread pool instead.
 """
-
+import time
+import traceback
 import asyncio
 import os
 import re
@@ -296,11 +297,10 @@ class Retriever:
             logger.error("Reranking failed", error=str(e))
             return candidates[:self.output_k]
 
+
 class LLMClient:
     """
-    Two sync clients + one thread pool.
-    Sync SDK uses httpx (5s keepalive) → no stale connections.
-    Thread pool keeps FastAPI async.
+    Two sync clients + thread pool + automatic retry.
     """
     
     def __init__(self, api_key: str, base_url: str):
@@ -312,12 +312,13 @@ class LLMClient:
         }
         
         self.timeouts = {
-            "enhancer": 30,
-            "generator": 90,
+            "enhancer": settings.LLM_TIMEOUT_SECONDS,
+            "generator": settings.LLM_TIMEOUT_SECONDS,
         }
         
+        self.max_retries = 3
         self._pool = ThreadPoolExecutor(max_workers=250, thread_name_prefix="llm")
-        logger.info("✓ LLMClient ready")
+        logger.info("✓ LLMClient ready (with retry)")
     
     async def generate(
         self,
@@ -330,32 +331,113 @@ class LLMClient:
         thinking_budget: int = 0,
     ) -> str:
         client = self.clients[role]
+        timeout = self.timeouts[role]
+        base_request_id = f"{role}_{int(time.time() * 1000) % 100000}"
         
-        def _call():
-            config = types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=temperature,
-                top_p=top_p,
-            )
-            if thinking_budget > 0:
-                config.thinking_config = types.ThinkingConfig(
-                    thinking_budget=thinking_budget
-                )
+        last_error = None
+        
+        for attempt in range(self.max_retries):
+            request_id = f"{base_request_id}_attempt_{attempt + 1}"
+            t_start = time.perf_counter()
             
-            return client.models.generate_content(
-                model=model, config=config, contents=content
-            ).text.strip()
+            logger.info(
+                "LLM request starting",
+                request_id=request_id,
+                role=role,
+                model=model,
+                attempt=attempt + 1,
+                max_retries=self.max_retries,
+                timeout=timeout,
+                content_length=len(content) if content else 0,
+            )
+            
+            def _call():
+                t_call = time.perf_counter()
+                logger.info(
+                    "LLM thread started",
+                    request_id=request_id,
+                    role=role,
+                    thread_delay_ms=round((t_call - t_start) * 1000, 2),
+                )
+                
+                config = types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
+                if thinking_budget > 0:
+                    config.thinking_config = types.ThinkingConfig(
+                        thinking_budget=thinking_budget
+                    )
+                
+                t_api = time.perf_counter()
+                response = client.models.generate_content(
+                    model=model, config=config, contents=content
+                )
+                result = response.text.strip()
+                
+                logger.info(
+                    "LLM API success",
+                    request_id=request_id,
+                    role=role,
+                    api_time_ms=round((time.perf_counter() - t_api) * 1000, 2),
+                    result_length=len(result),
+                )
+                return result
+            
+            try:
+                loop = asyncio.get_running_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(self._pool, _call),
+                    timeout=timeout,
+                )
+                
+                logger.info(
+                    "LLM request complete",
+                    request_id=request_id,
+                    role=role,
+                    attempt=attempt + 1,
+                    total_time_ms=round((time.perf_counter() - t_start) * 1000, 2),
+                )
+                return result
+            
+            except asyncio.TimeoutError as e:
+                last_error = e
+                elapsed = round((time.perf_counter() - t_start) * 1000, 2)
+                
+                if attempt < self.max_retries - 1:
+                    logger.warning(
+                        "LLM timeout, retrying",
+                        request_id=request_id,
+                        role=role,
+                        attempt=attempt + 1,
+                        next_attempt=attempt + 2,
+                        time_elapsed_ms=elapsed,
+                    )
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.error(
+                        "LLM all retries failed",
+                        request_id=base_request_id,
+                        role=role,
+                        attempts=self.max_retries,
+                    )
+            
+            except Exception as e:
+                logger.error(
+                    "LLM exception",
+                    request_id=request_id,
+                    role=role,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    traceback=traceback.format_exc(),
+                )
+                raise
         
-        loop = asyncio.get_running_loop()
-        return await asyncio.wait_for(
-            loop.run_in_executor(self._pool, _call),
-            timeout=self.timeouts[role],
-        )
+        raise last_error
     
     def shutdown(self):
         self._pool.shutdown(wait=False)
-
-
 class RAGEngine:
     """
     Fully async RAG engine.
@@ -489,7 +571,7 @@ class RAGEngine:
 
             instruction = QUERY_ENHANCEMENT_PROMPT.invoke({
                 "maxtoken": str(settings.ENHANCER_OUTPUT_TOKEN),
-            })
+            }).to_string()
             
             if not settings.LLM_TURNED_ON:
                 return {
@@ -523,14 +605,17 @@ class RAGEngine:
                         "resolved_query": data.get("resolved_query", ""),
                         "keywords": data.get("keywords", [])
                     }
-                
             except Exception as e:
-                logger.error("Query enhancement CRASHED", error=str(e))
-                # Fallback to original question so the user still gets an answer.
+                logger.error(
+                    "Query enhancement CRASHED",
+                    error=str(e) if str(e) else "empty error string",
+                    error_type=type(e).__name__,
+                    error_repr=repr(e),
+                )
                 return {
-                    "enhancement_status": "REJECTED", # Pretend it worked so we still search
-                    "rejection_reason": "server had some trouble - Query enhancement CRASHED",       # Fallback to raw user input
-                }
+                    "enhancement_status": "REJECTED",
+                    "rejection_reason": f"server had problem , Enhancement failed",
+                }    
             
         def route_query(state: State) -> Literal["retrieve", "end"]:
             """Conditional Edge."""
@@ -573,7 +658,7 @@ class RAGEngine:
 
             instruction = ANSWER_GENERATION_PROMPT.invoke({
                 "maxtoken": settings.ANSWER_LLM_OUTPUT_TOKEN
-            })
+            }).to_string()
             
             if not settings.LLM_TURNED_ON:
                 return {"answer": test_message_collection.test_message_2}

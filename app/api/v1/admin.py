@@ -187,6 +187,7 @@ async def delete_user_permanently(user_id: str, request: UserDeleteRequest, curr
         raise NotFoundException("User not found")
     
     stats = await UserService.delete_user_permanently(db, user_id)
+    
     return {"message": "User permanently deleted", "user_id": user_id, "chats_deleted": stats["chats_deleted"], "messages_deleted": stats["messages_deleted"]}
 
 

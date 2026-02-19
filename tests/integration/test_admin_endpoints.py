@@ -215,30 +215,30 @@ class TestAdminDeletion:
         assert "messages_deleted" in data
 
     @pytest.mark.asyncio
-    async def test_delete_wrong_password(self, client, admin_headers, test_user):
+    async def test_delete_wrong_admin_password(self, client, admin_headers, test_user):
+        """Test that wrong admin password returns 400"""
         response = await client.request(
             "DELETE",
             f"/api/v1/admin/users/{test_user.id}",
             headers=admin_headers,
             json={
                 "admin_password": "WrongPassword123!",
-                "confirm_username": test_user.username,
             },
         )
         assert response.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_delete_wrong_username(self, client, admin_headers, test_user):
+    async def test_delete_nonexistent_user(self, client, admin_headers):
+        """Test that deleting non-existent user returns 404"""
         response = await client.request(
             "DELETE",
-            f"/api/v1/admin/users/{test_user.id}",
+            f"/api/v1/admin/users/nonexistent-user-id-12345",
             headers=admin_headers,
             json={
                 "admin_password": "AdminPassword123!",
-                "confirm_username": "wrongusername",
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_delete_self_fails(self, client, admin_headers, admin_user):
