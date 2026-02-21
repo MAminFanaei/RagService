@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     USE_RERANKER : bool 
     USE_BM25: bool 
     DEVICE : str
-    
+    LLM_MAX_RETRY : int
     # Server
     HOST: str 
     PORT: int = 8000

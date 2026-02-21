@@ -9,6 +9,7 @@ Async versions run in a thread pool to not block the event loop.
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Optional, Dict, Any
 
 from jose import JWTError, jwt
@@ -212,3 +213,33 @@ if settings.GITHUB_CLIENT_ID and settings.GITHUB_CLIENT_SECRET:
 def cleanup_security():
     """Shutdown the password executor."""
     _password_executor.shutdown(wait=False)
+
+
+
+
+def sanitize_user_input(text: str) -> str:
+    """Sanitize user input to prevent prompt injection."""
+    if not text:
+        return ""
+    
+    sanitized = text
+    sanitized = re.sub(r'<[^>]+>', '', sanitized)
+    
+    injection_patterns = [
+        r'ignore\s+(previous|above|all)\s+instructions?',
+        r'disregard\s+(previous|above|all)\s+instructions?',
+        r'forget\s+(previous|above|all)\s+instructions?',
+        r'you\s+are\s+now\s+',
+        r'new\s+instructions?:',
+        r'system\s*:',
+        r'assistant\s*:',
+        r'human\s*:',
+        r'\[INST\]',
+        r'\[/INST\]',
+        r'<<SYS>>',
+        r'<</SYS>>',
+    ]
+    
+    for pattern in injection_patterns:
+        sanitized = re.sub(pattern, '[FILTERED]', sanitized, flags=re.IGNORECASE)
+    return sanitized.strip()

@@ -106,6 +106,7 @@ class RAGService:
         assistant_metadata = {
             "resolved_query": rag_result.get("resolved_query"),
             "enhanced_query": rag_result.get("enhanced_query"),
+            "keywords" : rag_result.get("keywords", []),
             "docs_retrieved": len(rag_result.get("retrieved_docs", [])),
             "processing_time_ms": processing_time,
             "had_conversation_context": rag_result.get("had_conversation_context", False),

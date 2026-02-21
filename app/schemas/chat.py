@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, TypedDict
 from datetime import datetime
+from langchain_core.documents import Document as LangChainDocument
 
 class ChatCreate(BaseModel):
     title: Optional[str] = "New Chat"
@@ -62,3 +63,20 @@ class RAGQueryResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1)
+
+
+class State(TypedDict):
+    """State for LangGraph pipeline"""
+    question: str
+    conversation_history: List[str]
+    
+    # --- ADD THESE MISSING FIELDS ---
+    enhancement_status: Optional[str] # "ACCEPTED" or "REJECTED"
+    rejection_reason: Optional[str]
+    resolved_query: Optional[str]
+    keywords: Optional[List[str]]
+    # --------------------------------
+    
+    enhanced_query: Optional[str]
+    docs: List[LangChainDocument]
+    answer: str

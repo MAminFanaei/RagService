@@ -5,439 +5,32 @@ Fully Async RAG Engine - CORRECT VERSION
 Key insight: similarity_search_by_vector is NOT IMPLEMENTED in langchain_elasticsearch!
 So we run the full similarity_search(query) in a thread pool instead.
 """
-import time
-import traceback
 import asyncio
 import os
 import re
 import json
-from typing import Dict, Any, List, Optional , Literal
-from concurrent.futures import ThreadPoolExecutor
 import structlog
-from aiohttp import ServerDisconnectedError, ClientError
-from langchain_core.documents import Document as LangChainDocument
-from langchain_huggingface import HuggingFaceEmbeddings
-from sentence_transformers import CrossEncoder
-from langchain_elasticsearch import ElasticsearchStore
-from langgraph.graph import START, StateGraph, END
-from langchain_community.retrievers import BM25Retriever
-from typing import TypedDict
 import json
 from pathlib import Path
-
-from google import genai
-from google.genai import types
-
+from typing import Dict, Any, List , Literal
+from langchain_core.documents import Document as LangChainDocument
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_elasticsearch import ElasticsearchStore
+from langgraph.graph import START, StateGraph, END
+from app.core.llm_client import LLMClient
+from app.core.retriever import Retriever
+from app.core.security import sanitize_user_input
 from app.exceptions import InternalException
 from app.prompts import QUERY_ENHANCEMENT_PROMPT, ANSWER_GENERATION_PROMPT
 from app.config import settings
+from app.schemas.chat import State
 import app.test_message_collection as test_message_collection
 
 logger = structlog.get_logger()
 
+DEBUG_MOD = settings.DEBUG
 # Environment setup
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-DEBUG_MOD = settings.DEBUG
-
-# =============================================================================
-# THREAD POOL CONFIGURATION
-# =============================================================================
-
-# How many concurrent embedding+search operations to allow
-# Each worker can handle one similarity_search (which includes embedding)
-# Thread pool for ES search (includes embedding inside)
-_search_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
-    max_workers=settings.ELASTIC_SEARCH_WORKERS,
-    thread_name_prefix="es_search"
-)
-logger.info(f"ES search executor initialized: {settings.ELASTIC_SEARCH_WORKERS} workers")
-
-# Separate pool for BM25/Reranker if enabled
-_cpu_executor: Optional[ThreadPoolExecutor] = None
-if settings.USE_BM25 or settings.USE_RERANKER:
-    _cpu_executor = ThreadPoolExecutor(
-        max_workers=settings.CPU_BOUNDED_WORKERS,
-        thread_name_prefix="cpu_ops"
-    )
-    logger.info(f"CPU executor initialized: {settings.CPU_BOUNDED_WORKERS} workers")
-
-
-def sanitize_user_input(text: str) -> str:
-    """Sanitize user input to prevent prompt injection."""
-    if not text:
-        return ""
-    
-    sanitized = text
-    sanitized = re.sub(r'<[^>]+>', '', sanitized)
-    
-    injection_patterns = [
-        r'ignore\s+(previous|above|all)\s+instructions?',
-        r'disregard\s+(previous|above|all)\s+instructions?',
-        r'forget\s+(previous|above|all)\s+instructions?',
-        r'you\s+are\s+now\s+',
-        r'new\s+instructions?:',
-        r'system\s*:',
-        r'assistant\s*:',
-        r'human\s*:',
-        r'\[INST\]',
-        r'\[/INST\]',
-        r'<<SYS>>',
-        r'<</SYS>>',
-    ]
-    
-    for pattern in injection_patterns:
-        sanitized = re.sub(pattern, '[FILTERED]', sanitized, flags=re.IGNORECASE)
-    return sanitized.strip()
-
-
-class State(TypedDict):
-    """State for LangGraph pipeline"""
-    question: str
-    conversation_history: List[str]
-    
-    # --- ADD THESE MISSING FIELDS ---
-    enhancement_status: Optional[str] # "ACCEPTED" or "REJECTED"
-    rejection_reason: Optional[str]
-    resolved_query: Optional[str]
-    keywords: Optional[List[str]]
-    # --------------------------------
-    
-    enhanced_query: Optional[str]
-    docs: List[LangChainDocument]
-    answer: str
-
-
-class Retriever:
-    """
-    Hybrid retriever with proper async handling.
-    
-    KEY INSIGHT: similarity_search_by_vector is NOT IMPLEMENTED in langchain_elasticsearch!
-    So we run the full similarity_search(query) in a thread pool.
-    """
-    
-    def __init__(
-        self,
-        es_store: ElasticsearchStore,
-        documents: List[LangChainDocument],
-        embeddings: HuggingFaceEmbeddings,
-        reranker_model: str,
-        output_k: int,
-        use_reranker: bool,
-        use_bm25: bool
-    ):
-        self.es_store = es_store
-        self.documents = documents
-        self.embeddings = embeddings
-        self.output_k = output_k
-        self.use_reranker = use_reranker
-        self.use_bm25 = use_bm25
-        
-        # BM25 - CPU only
-        if self.use_bm25:
-            self.bm25_retriever = BM25Retriever.from_documents(documents)
-            self.bm25_retriever.k = output_k * 2
-            logger.info("✓ BM25 enabled")
-        else:
-            self.bm25_retriever = None
-            logger.info("✗ BM25 disabled")
-        
-        # Reranker - GPU accelerated
-        if self.use_reranker:
-            self.reranker = CrossEncoder(
-                reranker_model,
-                device=settings.DEVICE
-            )
-            logger.info("✓ Reranker enabled", device=settings.DEVICE)
-        else:
-            self.reranker = None
-            logger.info("✗ Reranker disabled")
-        
-        logger.info("Retriever initialized", 
-                    use_bm25=use_bm25,
-                    use_reranker=use_reranker, 
-                    output_k=output_k)
-    
-    async def retrieve(self, query: str) -> List[LangChainDocument]:
-        """
-        Hybrid retrieval with proper parallelism.
-        
-        ES search runs in thread pool (includes embedding internally).
-        BM25 runs in separate thread pool if enabled.
-        """
-        # Run ES and BM25 in parallel (both in thread pools)
-        es_task = self._es_search_in_executor(query, self.output_k * 2)
-        
-        if self.use_bm25:
-            bm25_task = self._bm25_search(query)
-            results = await asyncio.gather(es_task, bm25_task, return_exceptions=True)
-            es_results = results[0] if not isinstance(results[0], Exception) else []
-            bm25_results = results[1] if not isinstance(results[1], Exception) else []
-            
-            if isinstance(results[0], Exception):
-                logger.error("ES search exception", error=str(results[0]))
-            if isinstance(results[1], Exception):
-                logger.error("BM25 search exception", error=str(results[1]))
-        else:
-            es_results = await es_task
-            if isinstance(es_results, Exception):
-                logger.error("ES search exception", error=str(es_results))
-                es_results = []
-            bm25_results = []
-        
-        # Combine and deduplicate
-        candidates = list(es_results) + list(bm25_results)
-        seen = set()
-        unique_candidates = []
-        
-        for doc in candidates:
-            doc_id = doc.metadata.get("chunk_id") if doc.metadata else None
-            if doc_id and doc_id not in seen:
-                seen.add(doc_id)
-                unique_candidates.append(doc)
-            elif not doc_id:
-                content_hash = hash(doc.page_content[:100])
-                if content_hash not in seen:
-                    seen.add(content_hash)
-                    unique_candidates.append(doc)
-        
-        if not unique_candidates:
-            logger.warning("No documents retrieved", query=query[:50])
-            return []
-        
-        # Optionally rerank
-        if self.use_reranker and self.reranker:
-            return await self._rerank_async(query, unique_candidates)
-        
-        return unique_candidates[:self.output_k]
-    
-    async def _es_search_in_executor(self, query: str, k: int) -> List[LangChainDocument]:
-        """
-        Run ES similarity_search in thread pool.
-        
-        This is the CORRECT approach because:
-        1. similarity_search(query) WORKS (includes embedding internally)
-        2. similarity_search_by_vector(embedding) is NOT IMPLEMENTED
-        3. Running in thread pool prevents blocking the event loop
-        """
-        loop = asyncio.get_running_loop()
-        
-        def do_search():
-            """Sync search function - runs in thread pool."""
-            try:
-                # Use the SYNC method that actually works!
-                results = self.es_store.similarity_search(query, k=k)
-                return results
-            except Exception as e:
-                logger.error("ES search error in thread", 
-                           error=str(e), 
-                           error_type=type(e).__name__)
-                return []
-        
-        try:
-            results = await asyncio.wait_for(
-                loop.run_in_executor(_search_executor, do_search),
-                timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
-            )
-            return results if results else []
-        except asyncio.TimeoutError:
-            logger.warning("ES search timed out")
-            return []
-        except Exception as e:
-            logger.error("ES search failed", error=str(e))
-            return []
-    
-    async def _bm25_search(self, query: str) -> List[LangChainDocument]:
-        """Run BM25 in executor (CPU-bound)."""
-        if not _cpu_executor or not self.bm25_retriever:
-            return []
-        
-        loop = asyncio.get_running_loop()
-        try:
-            results = await asyncio.wait_for(
-                loop.run_in_executor(_cpu_executor, self.bm25_retriever.invoke, query),
-                timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
-            )
-            return results
-        except asyncio.TimeoutError:
-            logger.warning("BM25 search timed out")
-            return []
-        except Exception as e:
-            logger.error("BM25 search failed", error=str(e))
-            return []
-    
-    async def _rerank_async(
-        self,
-        query: str,
-        candidates: List[LangChainDocument]
-    ) -> List[LangChainDocument]:
-        """Rerank documents in executor."""
-        if not candidates or not self.use_reranker:
-            return candidates[:self.output_k]
-        
-        loop = asyncio.get_running_loop()
-        executor = _cpu_executor or _search_executor
-        
-        def rerank():
-            pairs = [[query, doc.page_content] for doc in candidates]
-            scores = self.reranker.predict(pairs)
-            doc_scores = list(zip(candidates, scores))
-            doc_scores.sort(key=lambda x: x[1], reverse=True)
-            return [doc for doc, _ in doc_scores[:self.output_k]]
-        
-        try:
-            results = await asyncio.wait_for(
-                loop.run_in_executor(executor, rerank),
-                timeout=settings.RETRIEVAL_TIMEOUT_SECONDS
-            )
-            return results
-        except asyncio.TimeoutError:
-            logger.warning("Reranking timed out")
-            return candidates[:self.output_k]
-        except Exception as e:
-            logger.error("Reranking failed", error=str(e))
-            return candidates[:self.output_k]
-
-
-class LLMClient:
-    """
-    Two sync clients + thread pool + automatic retry.
-    """
-    
-    def __init__(self, api_key: str, base_url: str):
-        opts = {"base_url": base_url}
-        
-        self.clients = {
-            "enhancer": genai.Client(api_key=api_key, http_options=opts),
-            "generator": genai.Client(api_key=api_key, http_options=opts),
-        }
-        
-        self.timeouts = {
-            "enhancer": settings.LLM_TIMEOUT_SECONDS,
-            "generator": settings.LLM_TIMEOUT_SECONDS,
-        }
-        
-        self.max_retries = 3
-        self._pool = ThreadPoolExecutor(max_workers=250, thread_name_prefix="llm")
-        logger.info("✓ LLMClient ready (with retry)")
-    
-    async def generate(
-        self,
-        model: str,
-        system_instruction: str,
-        content: str,
-        temperature: float,
-        top_p: float,
-        role: str = "generator",
-        thinking_budget: int = 0,
-    ) -> str:
-        client = self.clients[role]
-        timeout = self.timeouts[role]
-        base_request_id = f"{role}_{int(time.time() * 1000) % 100000}"
-        
-        last_error = None
-        
-        for attempt in range(self.max_retries):
-            request_id = f"{base_request_id}_attempt_{attempt + 1}"
-            t_start = time.perf_counter()
-            
-            logger.info(
-                "LLM request starting",
-                request_id=request_id,
-                role=role,
-                model=model,
-                attempt=attempt + 1,
-                max_retries=self.max_retries,
-                timeout=timeout,
-                content_length=len(content) if content else 0,
-            )
-            
-            def _call():
-                t_call = time.perf_counter()
-                logger.info(
-                    "LLM thread started",
-                    request_id=request_id,
-                    role=role,
-                    thread_delay_ms=round((t_call - t_start) * 1000, 2),
-                )
-                
-                config = types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
-                if thinking_budget > 0:
-                    config.thinking_config = types.ThinkingConfig(
-                        thinking_budget=thinking_budget
-                    )
-                
-                t_api = time.perf_counter()
-                response = client.models.generate_content(
-                    model=model, config=config, contents=content
-                )
-                result = response.text.strip()
-                
-                logger.info(
-                    "LLM API success",
-                    request_id=request_id,
-                    role=role,
-                    api_time_ms=round((time.perf_counter() - t_api) * 1000, 2),
-                    result_length=len(result),
-                )
-                return result
-            
-            try:
-                loop = asyncio.get_running_loop()
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(self._pool, _call),
-                    timeout=timeout,
-                )
-                
-                logger.info(
-                    "LLM request complete",
-                    request_id=request_id,
-                    role=role,
-                    attempt=attempt + 1,
-                    total_time_ms=round((time.perf_counter() - t_start) * 1000, 2),
-                )
-                return result
-            
-            except asyncio.TimeoutError as e:
-                last_error = e
-                elapsed = round((time.perf_counter() - t_start) * 1000, 2)
-                
-                if attempt < self.max_retries - 1:
-                    logger.warning(
-                        "LLM timeout, retrying",
-                        request_id=request_id,
-                        role=role,
-                        attempt=attempt + 1,
-                        next_attempt=attempt + 2,
-                        time_elapsed_ms=elapsed,
-                    )
-                    await asyncio.sleep(0.5)
-                else:
-                    logger.error(
-                        "LLM all retries failed",
-                        request_id=base_request_id,
-                        role=role,
-                        attempts=self.max_retries,
-                    )
-            
-            except Exception as e:
-                logger.error(
-                    "LLM exception",
-                    request_id=request_id,
-                    role=role,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                    traceback=traceback.format_exc(),
-                )
-                raise
-        
-        raise last_error
-    
-    def shutdown(self):
-        self._pool.shutdown(wait=False)
 class RAGEngine:
     """
     Fully async RAG engine.
@@ -534,7 +127,7 @@ class RAGEngine:
             reranker_model=settings.RERANKER_MODEL_PATH,
             output_k=settings.RETRIEVER_OUTPUT_K,
             use_reranker=settings.USE_RERANKER,
-            use_bm25=settings.USE_BM25
+            use_bm25=settings.USE_BM25,
         )
         logger.info("✓ Retriever Initialized")
         
@@ -629,10 +222,11 @@ class RAGEngine:
             """Hybrid retrieval node."""
             query = state.get("enhanced_query") or state.get("resolved_query") or state["question"]
             keywords = state.get("keywords", [])
-            if keywords and isinstance(keywords, list):
+            if isinstance(keywords, list):          # ← changed: removed `if keywords and`
                 keywords = " ".join(keywords)
-
-            docs = await engine.retriever.retrieve(query + keywords)
+            
+            search_query = f"{query} {keywords}".strip() if keywords else query
+            docs = await engine.retriever.retrieve(search_query)
             if DEBUG_MOD:
                 logger.info(f"Retrieved {len(docs)} documents")
             return {"docs": docs}
@@ -664,23 +258,20 @@ class RAGEngine:
                 return {"answer": test_message_collection.test_message_2}
             
             # In generate_answer node:
-            for attempt in range(3):
-                try:
-                    answer = await engine.llm.generate(
-                        model=settings.ANSWER_GENERATOR_MODEL_NAME,
-                        system_instruction=instruction,
-                        content=f"<user_input>{question}</user_input>\n\n<resolved_query>{resolved_query}</resolved_query>\n\n<Conversation_History>{conversation_history}</Conversation_History>\n\n <Retrieved_Documents>{docs_content}</Retrieved_Documents>",
-                        temperature=0.2,
-                        top_p=0.9,
-                        role="generator",
-                        thinking_budget=settings.GENERATOR_THINKING_BUDGET,
-                    )
-                    return {"answer": answer}
-                except Exception as e:
-                    if attempt == 2:
-                        logger.error("Answer generation failed", error=str(e))
-                        return {"answer": "I'm sorry, I encountered an error."}
-                    await asyncio.sleep(1)
+            try:
+                answer = await engine.llm.generate(
+                    model=settings.ANSWER_GENERATOR_MODEL_NAME,
+                    system_instruction=instruction,
+                    content=f"<user_input>{question}</user_input>\n\n<resolved_query>{resolved_query}</resolved_query>\n\n<Conversation_History>{conversation_history}</Conversation_History>\n\n <Retrieved_Documents>{docs_content}</Retrieved_Documents>",
+                    temperature=0.1,
+                    top_p=0.9,
+                    role="generator",
+                    thinking_budget=settings.GENERATOR_THINKING_BUDGET,
+                )
+                return {"answer": answer}
+            except Exception as e:
+                    logger.error("Answer generation failed", error=str(e))
+                    return {"answer": "I'm sorry, I encountered an error."}
                     
         # Build graph
         graph_builder = StateGraph(State)
@@ -706,7 +297,7 @@ class RAGEngine:
     async def query(
         self,
         question: str,
-        conversation_history: List[str] = ""
+        conversation_history: List[str] 
     ) -> Dict[str, Any]:
         """Execute fully async RAG query."""
         input_state = {
@@ -734,6 +325,7 @@ class RAGEngine:
                 "question": result.get("question"),
                 "resolved_query": result.get("resolved_query"),
                 "enhanced_query": result.get("enhanced_query"),
+                "keywords" : result.get("keywords", []),
                 "answer": final_answer,
                 "usage": {},
                 "retrieved_docs": retrieved_docs,
@@ -759,7 +351,7 @@ class RAGEngine:
             "async": True,
             "thread_pool": {
                 "ELASTIC_SEARCH_WORKERS": settings.ELASTIC_SEARCH_WORKERS,
-                "cpu_workers": _cpu_executor._max_workers if _cpu_executor else 0,
+                "cpu_workers": settings.CPU_BOUNDED_WORKERS if settings.CPU_BOUNDED_WORKERS else 0,
             },
             "timeouts": {
                 "llm": settings.LLM_TIMEOUT_SECONDS,
@@ -772,12 +364,3 @@ class RAGEngine:
 def create_rag_engine() -> RAGEngine:
     """Factory function to create RAG engine."""
     return RAGEngine()
-
-
-async def cleanup_rag_engine():
-    """Cleanup thread pools on shutdown."""
-    if _search_executor:
-        _search_executor.shutdown(wait=False)
-    if _cpu_executor:
-        _cpu_executor.shutdown(wait=False)
-    logger.info("RAG engine executors cleaned up")
