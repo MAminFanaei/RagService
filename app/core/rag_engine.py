@@ -136,6 +136,7 @@ class RAGEngine:
             api_key=settings.LLM_API_KEY,
             base_url=settings.LLM_BASE_URL
         )
+
         logger.info("✓ LLMClient Initialized" if settings.LLM_TURNED_ON else "✗ LLM Client Disabled")
         
         # Build graph
@@ -171,11 +172,12 @@ class RAGEngine:
                     "enhancement_status": "ACCEPTED",
                     "enhanced_query": question,
                     "resolved_query": "",
-                    "keywords": []
+                    "keywords": [],
+                    "enhancer_usage": {},
                 }
             
             try:
-                raw_response  = await engine.llm.generate(
+                llm_result = await engine.llm.generate(  
                     model=settings.QUERY_ENHANCER_MODEL_NAME,
                     system_instruction=instruction,
                     content=f"<user_input>{question}</user_input> \n\n <Conversation_History>{conversation_history}</Conversation_History>",
@@ -184,19 +186,24 @@ class RAGEngine:
                     role="enhancer",
                     thinking_budget=settings.ENHANCER_THINKING_BUDGET,
                 )
+                raw_response = llm_result["text"] 
+                enhancer_usage = llm_result["usage"]
+                
                 data = engine._parse_json_response(raw_response)
 
                 if data.get("status") == "REJECTED":
                     return {
                         "enhancement_status": "REJECTED",
-                        "rejection_reason": data.get("reason", "Query rejected by domain filter.")
+                        "rejection_reason": data.get("reason", "Query rejected by domain filter."),
+                        "enhancer_usage": enhancer_usage,
                     }
                 else:
                     return {
                         "enhancement_status": "ACCEPTED",
                         "enhanced_query": data.get("enhanced_query", question),
                         "resolved_query": data.get("resolved_query", ""),
-                        "keywords": data.get("keywords", [])
+                        "keywords": data.get("keywords", []),
+                        "enhancer_usage": enhancer_usage, 
                     }
             except Exception as e:
                 logger.error(
@@ -208,7 +215,8 @@ class RAGEngine:
                 return {
                     "enhancement_status": "REJECTED",
                     "rejection_reason": f"server had problem , Enhancement failed",
-                }    
+                    "enhancer_usage": {}, 
+                }  
             
         def route_query(state: State) -> Literal["retrieve", "end"]:
             """Conditional Edge."""
@@ -255,11 +263,13 @@ class RAGEngine:
             }).to_string()
             
             if not settings.LLM_TURNED_ON:
-                return {"answer": test_message_collection.test_message_2}
+                return {
+                    "answer": test_message_collection.test_message_2,
+                    "generator_usage": {},                  
+                }
             
-            # In generate_answer node:
             try:
-                answer = await engine.llm.generate(
+                llm_result = await engine.llm.generate(   
                     model=settings.ANSWER_GENERATOR_MODEL_NAME,
                     system_instruction=instruction,
                     content=f"<user_input>{question}</user_input>\n\n<resolved_query>{resolved_query}</resolved_query>\n\n<Conversation_History>{conversation_history}</Conversation_History>\n\n <Retrieved_Documents>{docs_content}</Retrieved_Documents>",
@@ -268,10 +278,23 @@ class RAGEngine:
                     role="generator",
                     thinking_budget=settings.GENERATOR_THINKING_BUDGET,
                 )
-                return {"answer": answer}
+                return {
+                    "answer": llm_result["text"],           
+                    "generator_usage": llm_result["usage"],   
+                }
             except Exception as e:
-                    logger.error("Answer generation failed", error=str(e))
-                    return {"answer": "I'm sorry, I encountered an error."}
+                logger.error("Answer generation failed", error=str(e))
+                return {
+                    "answer": "I'm sorry, I encountered an error.",
+                    "generator_usage": 
+                                {"text": "" ,
+                                 "usage":  {
+                                            "input_prompt_token": 0,
+                                            "pure_output_token": 0,
+                                            "thoughts_token_count": 0,
+                                            "thoughts_token": 0,
+                                            "cached_token": 0,
+                                            }}}
                     
         # Build graph
         graph_builder = StateGraph(State)
@@ -311,6 +334,36 @@ class RAGEngine:
                 timeout=settings.TOTAL_QUERY_TIMEOUT_SECONDS
             )
             
+            # ---- Build per-step usage ----
+            enhancer_usage = result.get("enhancer_usage", {})
+            generator_usage = result.get("generator_usage", {})
+            
+            # Aggregate totals across both LLM calls
+            total_usage = {
+                "enhancer": enhancer_usage,
+                "generator": generator_usage,
+                "total_input_tokens": (
+                    enhancer_usage.get("input_prompt_token", 0)
+                    + generator_usage.get("input_prompt_token", 0)
+                ),
+                "total_output_tokens": (
+                    enhancer_usage.get("pure_output_token", 0)
+                    + generator_usage.get("pure_output_token", 0)
+                ),
+                "total_thinking_tokens": (
+                    enhancer_usage.get("thoughts_token", 0)
+                    + generator_usage.get("thoughts_token", 0)
+                ),
+                "total_tokens": (
+                    enhancer_usage.get("total_token", 0)
+                    + generator_usage.get("total_token", 0)
+                ),
+                "total_cashed_tokens": (
+                    enhancer_usage.get("cached_token", 0)
+                    + generator_usage.get("cached_token", 0)
+                ),
+            }
+            
             if result.get("enhancement_status") == "REJECTED":
                 final_answer = result.get("rejection_reason", "answer rejected.")
                 retrieved_docs = []
@@ -325,9 +378,9 @@ class RAGEngine:
                 "question": result.get("question"),
                 "resolved_query": result.get("resolved_query"),
                 "enhanced_query": result.get("enhanced_query"),
-                "keywords" : result.get("keywords", []),
+                "keywords": result.get("keywords", []),
                 "answer": final_answer,
-                "usage": {},
+                "usage": total_usage,                
                 "retrieved_docs": retrieved_docs,
                 "had_conversation_context": bool(conversation_history)
             }

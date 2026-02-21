@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, TypedDict
+from typing import Any, Dict, Optional, List, TypedDict
 from datetime import datetime
 from langchain_core.documents import Document as LangChainDocument
 
@@ -65,18 +65,16 @@ class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1)
 
 
-class State(TypedDict):
-    """State for LangGraph pipeline"""
+class State(TypedDict, total=False):
     question: str
     conversation_history: List[str]
-    
-    # --- ADD THESE MISSING FIELDS ---
-    enhancement_status: Optional[str] # "ACCEPTED" or "REJECTED"
-    rejection_reason: Optional[str]
-    resolved_query: Optional[str]
-    keywords: Optional[List[str]]
-    # --------------------------------
-    
-    enhanced_query: Optional[str]
+    enhancement_status: str
+    enhanced_query: str
+    resolved_query: str
+    keywords: List[str]
+    rejection_reason: str
     docs: List[LangChainDocument]
     answer: str
+
+    enhancer_usage: Dict[str, Any]
+    generator_usage: Dict[str, Any]

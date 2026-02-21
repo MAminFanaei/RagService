@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     PASSWORD_HASH_WORKERS: int
     CPU_BOUNDED_WORKERS: int
     
-    
     # Security
     SECRET_KEY: str
     ALGORITHM: str 
