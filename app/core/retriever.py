@@ -43,7 +43,6 @@ class Retriever:
         self._search_executor = ThreadPoolExecutor(
             max_workers=settings.ELASTIC_SEARCH_WORKERS,
             thread_name_prefix="es_search")
-        logger.info(f"ES search executor initialized: {settings.ELASTIC_SEARCH_WORKERS} workers")
         
         self._cpu_executor = None
         if self.use_bm25 or self.use_reranker:
@@ -60,7 +59,6 @@ class Retriever:
             logger.info("✓ BM25 enabled")
         else:
             self.bm25_retriever = None
-            logger.info("✗ BM25 disabled")
         
         # Reranker - GPU accelerated
         if self.use_reranker:
@@ -71,12 +69,7 @@ class Retriever:
             logger.info("✓ Reranker enabled", device=settings.DEVICE)
         else:
             self.reranker = None
-            logger.info("✗ Reranker disabled")
-        
-        logger.info("Retriever initialized", 
-                    use_bm25=use_bm25,
-                    use_reranker=use_reranker, 
-                    output_k=output_k)
+    
     
     async def retrieve(self, query: str) -> List[LangChainDocument]:
         """

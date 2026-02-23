@@ -79,7 +79,7 @@ class RAGService:
                 
             except Exception as e:
                 if DEBUG:
-                    logger.info(f"RAGService: Failed to load conversation history: {e}")
+                    logger.error(f"RAGService: Failed to load conversation history: {e}")
         
         # =====================================================================
         # STEP 2: Execute RAG Query with History

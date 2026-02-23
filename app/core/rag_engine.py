@@ -106,7 +106,7 @@ class RAGEngine:
                     metadata=metadata
                 )
                 self.docs.append(doc)
-        logger.info(f"✓ Loaded {len(self.docs)} documents from {docs_path}")
+        logger.info(f"✓ Loaded {len(self.docs)} documents")
         
         # Index documents if needed
         if settings.INDEX_THE_DOCS:
@@ -129,8 +129,10 @@ class RAGEngine:
             use_reranker=settings.USE_RERANKER,
             use_bm25=settings.USE_BM25,
         )
-        logger.info("✓ Retriever Initialized")
-        
+        logger.info("✓ Retriever initialized", 
+                    use_bm25=settings.USE_BM25,
+                    use_reranker=settings.USE_RERANKER, 
+                    output_k=settings.RETRIEVER_OUTPUT_K)
         # Initialize LLM client
         self.llm = LLMClient(
             api_key=settings.LLM_API_KEY,
@@ -141,7 +143,6 @@ class RAGEngine:
         
         # Build graph
         self._build_graph()
-        logger.info("✓ RAG Engine initialized successfully")
     
 
     def _build_graph(self):
@@ -177,12 +178,12 @@ class RAGEngine:
                 }
             
             try:
-                llm_result = await engine.llm.generate(  
+                llm_result = await engine.llm.generate(
                     model=settings.QUERY_ENHANCER_MODEL_NAME,
                     system_instruction=instruction,
                     content=f"<user_input>{question}</user_input> \n\n <Conversation_History>{conversation_history}</Conversation_History>",
                     temperature=0.1,
-                    top_p=0.5,
+                    top_p=0.6,
                     role="enhancer",
                     thinking_budget=settings.ENHANCER_THINKING_BUDGET,
                 )
@@ -269,7 +270,7 @@ class RAGEngine:
                 }
             
             try:
-                llm_result = await engine.llm.generate(   
+                llm_result = await engine.llm.generate(
                     model=settings.ANSWER_GENERATOR_MODEL_NAME,
                     system_instruction=instruction,
                     content=f"<user_input>{question}</user_input>\n\n<resolved_query>{resolved_query}</resolved_query>\n\n<Conversation_History>{conversation_history}</Conversation_History>\n\n <Retrieved_Documents>{docs_content}</Retrieved_Documents>",

@@ -150,7 +150,7 @@ def init_db_sync():
     is fully operational during FastAPI lifespan startup.
     """
     Base.metadata.create_all(bind=sync_engine)
-    logger.info("Database tables initialized (sync)")
+    logger.info("✓ Database tables initialized (sync)")
 
 
 async def close_db():

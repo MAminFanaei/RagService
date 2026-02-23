@@ -53,15 +53,15 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
-    logger.info("Starting RAG Service", version=settings.APP_VERSION)
+    logger.info("✓ Starting RAG Service", version=settings.APP_VERSION)
     
     # Initialize database tables (sync - before event loop fully running)
     init_db_sync()
-    logger.info("MySQL initialized")
+    logger.info("✓ MySQL initialized")
     
     # Initialize RAG engine
     app.state.rag_engine = create_rag_engine()
-    logger.info("RAG engine initialized", status=app.state.rag_engine.get_stats())
+    logger.info("✓ RAG engine initialized", status=app.state.rag_engine.get_stats())
     
     # Create admin user if not exists - using async session
     async with AsyncSessionLocal() as db:

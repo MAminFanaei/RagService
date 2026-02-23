@@ -222,7 +222,7 @@ class ConversationMemoryService:
         parts = []
         for msg in messages:
             role = "User" if msg.role == "user" else "Assistant"
-            parts.append(f"{role}: {msg.content}")
+            parts.append(f"{role}: {msg.content}\n\n")
         
         return parts
     
@@ -239,7 +239,7 @@ class ConversationMemoryService:
         parts = []
         for msg in messages:
             role = "User" if msg.role == "user" else "Assistant"
-            parts.append(f"{role}: {msg.content}")
+            parts.append(f"{role}: {msg.content}\n\n")
         
         return "\n\n".join(parts)
 
