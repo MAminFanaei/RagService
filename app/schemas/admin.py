@@ -95,15 +95,15 @@ class UserActionResponse(BaseModel):
 class AdminPasswordResetRequest(BaseModel):
     """Request body for admin to reset a user's password."""
     admin_password: str = Field(..., min_length=1, description="Admin's own password for verification")
-    new_password: str = Field(..., min_length=8, description="New password for the target user")
-    confirm_new_password: str = Field(..., min_length=8, description="Confirm the new password")
+    new_password: str = Field(..., min_length=6, description="New password for the target user")
+    confirm_new_password: str = Field(..., min_length=6, description="Confirm the new password")
     
     @field_validator('new_password')
     @classmethod
     def password_strength(cls, v: str) -> str:
         """Validate password has minimum requirements."""
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters')
+        if len(v) < 6:
+            raise ValueError('Password must be at least 6 characters')
         if v.isdigit():
             raise ValueError('Password cannot be all numbers')
         if v.isalpha():
@@ -121,5 +121,5 @@ class AdminPasswordResetRequest(BaseModel):
 class AdminPasswordResetResponse(BaseModel):
     """Response for admin password reset."""
     message: str
-    user_id: str
+    username: str
     email: Optional[str]
