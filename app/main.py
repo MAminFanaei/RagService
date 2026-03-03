@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 import structlog
 import logging
 import sys
-
+from app.payment.routers import payment_router
 from app.core.rag_engine import create_rag_engine
 from app.config import settings
 from app.core.database import init_db_sync, AsyncSessionLocal, cleanup_all
@@ -122,7 +122,11 @@ setup_exception_handlers(app)
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(chats.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
-
+app.include_router(
+    payment_router,
+    prefix="/api/v1/payment",
+    tags=["Payment"],
+)
 
 @app.get("/")
 async def root():

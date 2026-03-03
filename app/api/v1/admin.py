@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 import structlog
 from app.core.database import get_db
 from app.core.security import get_password_hash_async, verify_password
-from app.exceptions import BadRequestException, NotFoundException
+from app.middleware.exceptions import BadRequestException, NotFoundException
 from app.schemas.admin import (
     AdminUserUpdate, UserActionResponse, UserDeleteRequest, UserDeleteResponse,
     UserDisableRequest, UserStatsResponse, ConversationExport , AdminPasswordResetResponse , AdminPasswordResetRequest

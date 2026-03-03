@@ -8,7 +8,7 @@ from typing import Callable, Optional
 from fastapi import status
 
 from app.config import settings
-from app.exceptions import NotImplementedException
+from app.middleware.exceptions import NotImplementedException
 
 
 def require_feature(

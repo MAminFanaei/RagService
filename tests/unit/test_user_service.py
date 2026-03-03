@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from app.services.user_service import UserService
 from app.models.user import User, AuthProvider
 from app.schemas.user import UserCreate
-from app.exceptions import (
+from app.middleware.exceptions import (
     BadRequestException,
     NotFoundException,
     ConflictException,

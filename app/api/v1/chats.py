@@ -12,7 +12,7 @@ import time
 import redis.asyncio as aioredis
 import structlog
 from app.core.database import get_db
-from app.exceptions import (
+from app.middleware.exceptions import (
     ForbiddenException, InputTooLongException, InternalException, 
     NotFoundException, RateLimitException, AppException
 )
@@ -193,7 +193,7 @@ async def send_message(
     redis: aioredis.Redis = Depends(get_redis_client)
 ):
     """Send a message and get RAG response."""
-    content_length = len(message.content) * 4
+    content_length = len(message.content) // 4
     max_length = settings.USER_QUERY_LENGTH_LIMIT
     
 

@@ -12,7 +12,7 @@ import redis.asyncio as aioredis
 
 from app.core.database import get_db, get_redis
 from app.core.security import decode_token, is_token_blacklisted
-from app.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
+from app.middleware.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
 from app.services.user_service import UserService
 from app.models.user import User
 

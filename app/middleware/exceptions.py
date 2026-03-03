@@ -1,6 +1,5 @@
 from fastapi import status
 
-
 class AppException(Exception):
     """Base exception for all app exceptions."""
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -111,7 +110,7 @@ class ElasticsearchWarning(ServiceWarning):
 class InputTooLongException(BadRequestException):
     """User input exceeds maximum length."""
     error_code = "INPUT_TOO_LONG"
-    
+    status_code = status.HTTP_400_BAD_REQUEST
     def __init__(
         self, 
         message: str = "Input exceeds maximum length",

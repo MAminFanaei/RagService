@@ -20,11 +20,11 @@ from langgraph.graph import START, StateGraph, END
 from app.core.llm_client import LLMClient
 from app.core.retriever import Retriever
 from app.core.security import sanitize_user_input
-from app.exceptions import InternalException
+from app.middleware.exceptions import InternalException
 from app.prompts import QUERY_ENHANCEMENT_PROMPT, ANSWER_GENERATION_PROMPT
 from app.config import settings
 from app.schemas.chat import State
-import app.test_message_collection as test_message_collection
+from app.prompts import test_message
 
 logger = structlog.get_logger()
 
@@ -265,7 +265,7 @@ class RAGEngine:
             
             if not settings.LLM_TURNED_ON:
                 return {
-                    "answer": test_message_collection.test_message_2,
+                    "answer": test_message,
                     "generator_usage": {},                  
                 }
             

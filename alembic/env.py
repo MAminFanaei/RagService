@@ -10,6 +10,14 @@ from sqlalchemy import pool
 from alembic import context
 import os
 import sys
+from app.payment.models import (  # noqa: F401
+    Payment,
+    Reverse,
+    Wallet,
+    WalletTransaction,
+    DiscountCode,
+    DiscountUsage,
+)
 
 # Add parent directory to path
 sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..')))

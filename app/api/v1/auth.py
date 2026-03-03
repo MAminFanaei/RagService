@@ -17,7 +17,7 @@ from app.models.user import AuthProvider, User
 from app.api.deps import get_current_user, get_redis_client
 from app.config import settings
 from app.core.feature_flags import require_feature
-from app.exceptions import BadRequestException, InternalException, NotImplementedException, UnauthorizedException
+from app.middleware.exceptions import BadRequestException, InternalException, NotImplementedException, UnauthorizedException
 from app.schemas.user import (
     UserCreate, UserLogin, UserResponse,
     PasswordChangeRequest, EmailChangeRequest, ProfileUpdateRequest,

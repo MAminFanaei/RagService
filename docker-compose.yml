@@ -12,10 +12,16 @@ services:
   # #    - "8000:8000" # dont use it since we are using nginx
   # #     - "127.0.0.1:8000:8000"
 
-  #   environment:
+    # environment:
   #     - DATABASE_URL=${DATABASE_URL}
   #     - REDIS_URL=${REDIS_URL} 
   #     - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
+  #     # - SEP_TERMINAL_ID=${SEP_TERMINAL_ID}
+  #     # - SEP_PAYMENT_URL=${SEP_PAYMENT_URL}
+  #     # - SEP_VERIFY_URL=${SEP_VERIFY_URL}
+  #     # - SEP_REVERSE_URL=${SEP_REVERSE_URL}
+  #     # - PAYMENT_CALLBACK_URL=${PAYMENT_CALLBACK_URL}
+  #     # - FRONTEND_PAYMENT_RESULT_URL=${FRONTEND_PAYMENT_RESULT_URL}
   #   volumes:
   #     - ./app:/app/app
   #     - ./models:/app/models

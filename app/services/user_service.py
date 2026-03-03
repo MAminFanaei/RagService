@@ -14,7 +14,7 @@ import secrets
 import re
 import uuid
 
-from app.exceptions import BadRequestException, ConflictException, ForbiddenException, NotFoundException
+from app.middleware.exceptions import BadRequestException, ConflictException, ForbiddenException, NotFoundException
 from app.models.user import User, AuthProvider
 from app.models.chat import ChatSession
 from app.models.message import Message

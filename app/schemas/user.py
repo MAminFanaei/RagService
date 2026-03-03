@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional
 from datetime import datetime, timedelta, timezone
-from app.exceptions import BadRequestException
+from app.middleware.exceptions import BadRequestException
 from app.models.user import AuthProvider
 import re
 

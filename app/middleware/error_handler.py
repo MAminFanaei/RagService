@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 import structlog
-from app.exceptions import AppException, RateLimitException, ServiceWarning
+from app.middleware.exceptions import AppException, RateLimitException, ServiceWarning
 from app.config import settings
 logger = structlog.get_logger()
 

@@ -11,7 +11,7 @@ from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 from fastapi import Request
-from app.exceptions import BadRequestException
+from app.middleware.exceptions import BadRequestException
 from app.services.chat_service import ChatService
 from app.services.memory_service import memory_service, ConversationContext
 from app.models.message import MessageRole
