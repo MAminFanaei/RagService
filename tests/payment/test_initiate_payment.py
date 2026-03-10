@@ -113,9 +113,10 @@ class TestInitiatePayment:
         auth_headers: dict,
         mock_sep,
         discount_factory,
+        payment_session_factory
     ):
         """Payment with valid discount code → reduced amount."""
-        async with TestSessionLocal() as session:
+        async with payment_session_factory() as session:
             await discount_factory.create(
                 session,
                 code="SAVE20",
@@ -158,5 +159,3 @@ class TestInitiatePayment:
         assert response.status_code in (400, 404)
 
 
-# Import TestSessionLocal for discount factory usage
-from tests.payment.conftest import TestSessionLocal

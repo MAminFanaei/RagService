@@ -1,28 +1,20 @@
+# tests/payment/conftest.py
 """
 Payment Service Test Fixtures
-
-Provides:
-    - Async test database (SQLite in-memory for speed)
-    - Test Redis (fakeredis)
-    - Authenticated test client with JWT
-    - Mock SEP gateway
-    - Factory functions for sample data
 """
 
 import pytest
 import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator, Generator, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import (
-    create_async_engine,
     AsyncSession,
     async_sessionmaker,
 )
-from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db, get_redis
 from app.core.security import create_access_token
@@ -39,58 +31,41 @@ from app.payment.core.constants import (
 )
 from app.payment.config import payment_settings
 
+# ─────────────────────────────────────────────────────────────
+# Session factory — fixture-scoped, bound to root async_engine
+# ─────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def payment_session_factory(async_engine):
+    """
+    Build an async_sessionmaker bound to the shared test engine.
+    Created per-test so it always points at the living engine.
+    """
+    return async_sessionmaker(
+        bind=async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
 
 # ─────────────────────────────────────────────────────────────
-# Test Database (SQLite async in-memory)
+# Table setup — ONE fixture, no duplicates
 # ─────────────────────────────────────────────────────────────
-
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-test_engine = create_async_engine(
-    TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-    echo=False,
-)
-
-TestSessionLocal = async_sessionmaker(
-    bind=test_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
-)
-
-
-@pytest.fixture(scope="session")
-def event_loop() -> Generator:
-    """Create a single event loop for all tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
 
 @pytest.fixture(autouse=True)
-async def setup_database():
+async def setup_payment_tables(async_engine):
     """Create all tables before each test, drop after."""
-    async with test_engine.begin() as conn:
+    async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    async with test_engine.begin() as conn:
+    async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 
 
-async def get_test_db() -> AsyncGenerator[AsyncSession, None]:
-    """Override get_db with test database session."""
-    async with TestSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
-
-
 # ─────────────────────────────────────────────────────────────
-# Mock Redis
+# Mock Redis  (unchanged)
 # ─────────────────────────────────────────────────────────────
 
 class FakeRedis:
@@ -98,7 +73,12 @@ class FakeRedis:
 
     def __init__(self):
         self._store: dict = {}
-        self._locks: dict = {}
+        self._lock: Optional[asyncio.Lock] = None
+
+    def _get_lock(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def ping(self) -> bool:
         return True
@@ -106,11 +86,13 @@ class FakeRedis:
     async def get(self, key: str):
         return self._store.get(key)
 
-    async def set(self, key: str, value: str, ex: int = None, nx: bool = False):
-        if nx and key in self._store:
-            return False
-        self._store[key] = value
-        return True
+    async def set(self, key: str, value, ex: int = None, nx: bool = False):
+        lock = self._get_lock()
+        async with lock:
+            if nx and key in self._store:
+                return False
+            self._store[key] = value
+            return True
 
     async def delete(self, *keys: str) -> int:
         count = 0
@@ -124,20 +106,57 @@ class FakeRedis:
         return 1 if key in self._store else 0
 
     async def eval(self, script: str, numkeys: int, *args):
-        """Simplified Lua script eval for lock release."""
-        if numkeys == 1:
-            key = args[0]
-            expected_value = args[1] if len(args) > 1 else None
-            stored = self._store.get(key)
-            if stored == expected_value:
-                del self._store[key]
-                return 1
-        return 0
+        lock = self._get_lock()
+        async with lock:
+            if numkeys == 1:
+                key = args[0]
+                expected_value = args[1] if len(args) > 1 else None
+                stored = self._store.get(key)
+                if stored == expected_value:
+                    del self._store[key]
+                    return 1
+                return 0
+            elif numkeys == 2:
+                key = args[0]
+                owners_key = args[1]
+                owners = self._store.get(owners_key, {})
+                if isinstance(owners, dict):
+                    owner_value = owners.get(key)
+                    current = self._store.get(key)
+                    if owner_value and current == owner_value:
+                        self._store.pop(key, None)
+                        owners.pop(key, None)
+                        return 1
+                    owners.pop(key, None)
+                return 0
+            return 0
 
     async def incr(self, key: str) -> int:
         val = int(self._store.get(key, 0)) + 1
         self._store[key] = str(val)
         return val
+
+    async def hset(self, name: str, key: str = None, value=None, mapping: dict = None):
+        if name not in self._store or not isinstance(self._store[name], dict):
+            self._store[name] = {}
+        if key is not None:
+            self._store[name][key] = value
+        if mapping:
+            self._store[name].update(mapping)
+        return 1
+
+    async def hget(self, name: str, key: str):
+        data = self._store.get(name)
+        if isinstance(data, dict):
+            return data.get(key)
+        return None
+
+    async def hdel(self, name: str, *keys: str):
+        data = self._store.get(name)
+        if isinstance(data, dict):
+            for key in keys:
+                data.pop(key, None)
+        return 1
 
     async def close(self):
         self._store.clear()
@@ -148,13 +167,11 @@ class FakeRedis:
 
 @pytest.fixture
 def fake_redis():
-    """Provide a fresh FakeRedis instance."""
     return FakeRedis()
 
 
 @pytest.fixture
 def override_redis(fake_redis):
-    """Override the Redis dependency with FakeRedis."""
     async def _get_fake_redis():
         return fake_redis
     app.dependency_overrides[get_redis] = _get_fake_redis
@@ -163,12 +180,11 @@ def override_redis(fake_redis):
 
 
 # ─────────────────────────────────────────────────────────────
-# Test User & Auth
+# Test User & Auth — use payment_session_factory, not module-level
 # ─────────────────────────────────────────────────────────────
 
 @pytest.fixture
-async def test_user(setup_database) -> User:
-    """Create a test user in the database."""
+async def test_user(setup_payment_tables, payment_session_factory) -> User:
     user = User(
         id=str(uuid.uuid4()),
         username="testuser",
@@ -178,7 +194,7 @@ async def test_user(setup_database) -> User:
         is_admin=False,
         is_verified=True,
     )
-    async with TestSessionLocal() as session:
+    async with payment_session_factory() as session:
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -186,8 +202,7 @@ async def test_user(setup_database) -> User:
 
 
 @pytest.fixture
-async def admin_user(setup_database) -> User:
-    """Create an admin test user."""
+async def admin_user(setup_payment_tables, payment_session_factory) -> User:
     user = User(
         id=str(uuid.uuid4()),
         username="adminuser",
@@ -197,7 +212,7 @@ async def admin_user(setup_database) -> User:
         is_admin=True,
         is_verified=True,
     )
-    async with TestSessionLocal() as session:
+    async with payment_session_factory() as session:
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -206,25 +221,34 @@ async def admin_user(setup_database) -> User:
 
 @pytest.fixture
 def auth_headers(test_user) -> dict:
-    """Get JWT auth headers for the test user."""
     token = create_access_token(data={"sub": test_user.id, "type": "access"})
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
 def admin_auth_headers(admin_user) -> dict:
-    """Get JWT auth headers for the admin user."""
     token = create_access_token(data={"sub": admin_user.id, "type": "access"})
     return {"Authorization": f"Bearer {token}"}
 
 
 # ─────────────────────────────────────────────────────────────
-# Test HTTP Client
+# Test HTTP Client — builds get_test_db from the fixture factory
 # ─────────────────────────────────────────────────────────────
 
 @pytest.fixture
-async def client(override_redis) -> AsyncGenerator[AsyncClient, None]:
+async def client(
+    override_redis,
+    payment_session_factory,
+) -> AsyncGenerator[AsyncClient, None]:
     """Async HTTP test client with test DB and fake Redis."""
+
+    async def get_test_db() -> AsyncGenerator[AsyncSession, None]:
+        async with payment_session_factory() as session:
+            try:
+                yield session
+            finally:
+                await session.close()
+
     app.dependency_overrides[get_db] = get_test_db
 
     transport = ASGITransport(app=app)
@@ -235,17 +259,11 @@ async def client(override_redis) -> AsyncGenerator[AsyncClient, None]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Mock SEP Gateway — FIXED: uses correct dataclass constructors
+# Mock SEP Gateway  (unchanged)
 # ─────────────────────────────────────────────────────────────
 
 class MockSEPGateway:
-    """
-    Simulates SEP API responses for testing.
-    
-    IMPORTANT: Uses snake_case field names matching the actual
-    dataclass definitions in sep_client.py, NOT SEP's PascalCase.
-    """
-
+    # ... (keep exactly as-is — no engine involvement)
     def __init__(self):
         self.token_counter = 0
         self.should_fail_token = False
@@ -269,133 +287,72 @@ class MockSEPGateway:
         self.calls.clear()
 
     async def mock_request_token(self, **kwargs):
-        """Simulate SEP Token API response."""
         self.calls.append({"method": "request_token", "kwargs": kwargs})
-
         from app.payment.services.sep_client import TokenResponse
-
         if self.should_fail_token:
-            return TokenResponse(
-                success=False,          # FIXED: was missing
-                status=-1,
-                token=None,
-                error_code="5",
-                error_desc="پارامترهای ارسال شده نامعتبر است",
-            )
-
+            return TokenResponse(success=False, status=-1, token=None,
+                                 error_code="5", error_desc="پارامترهای ارسال شده نامعتبر است")
         self.token_counter += 1
-        return TokenResponse(
-            success=True,               # FIXED: was missing
-            status=1,
-            token=f"test_token_{self.token_counter:04d}",
-            error_code=None,
-            error_desc=None,
-        )
+        return TokenResponse(success=True, status=1,
+                             token=f"test_token_{self.token_counter:04d}",
+                             error_code=None, error_desc=None)
 
     async def mock_verify_transaction(self, ref_num: str, **kwargs):
-        """Simulate SEP VerifyTransaction API response."""
-        self.calls.append({
-            "method": "verify_transaction",
-            "ref_num": ref_num,
-            "kwargs": kwargs,
-        })
-
+        self.calls.append({"method": "verify_transaction", "ref_num": ref_num, "kwargs": kwargs})
         if self.should_timeout:
             import httpx
             raise httpx.ReadTimeout("Simulated timeout")
-
-        from app.payment.services.sep_client import (
-            VerifyResponse,
-            VerifyTransactionDetail,
-        )
-
+        from app.payment.services.sep_client import VerifyResponse, VerifyTransactionDetail
         if self.should_fail_verify:
-            return VerifyResponse(
-                success=False,                          # FIXED: was Success
-                result_code=-2,                         # FIXED: was ResultCode
-                result_description="تراکنش یافت نشد",  # FIXED: was ResultDescription
-                transaction_detail=None,                # FIXED: was TransactionDetail
-            )
-
+            return VerifyResponse(success=False, result_code=-2,
+                                  result_description="تراکنش یافت نشد", transaction_detail=None)
         amount = self.verify_amount or 100000
-
         return VerifyResponse(
-            success=True,                               # FIXED: was Success
-            result_code=self.verify_result_code,        # FIXED: was ResultCode
+            success=True, result_code=self.verify_result_code,
             result_description="عملیات با موفقیت انجام شد",
-            transaction_detail=VerifyTransactionDetail( # FIXED: was TransactionDetail
-                rrn=f"RRN{uuid.uuid4().hex[:10]}",      # FIXED: was RRN
-                ref_num=ref_num,                        # FIXED: was RefNum
-                masked_pan="621986****8080",             # FIXED: was MaskedPan
+            transaction_detail=VerifyTransactionDetail(
+                rrn=f"RRN{uuid.uuid4().hex[:10]}", ref_num=ref_num,
+                masked_pan="621986****8080",
                 hashed_pan="b96a14400c3a59249e87c300ecc06e5920327e70220213b5bbb7d7b2410f7e0d",
                 terminal_number=int(payment_settings.SEP_TERMINAL_ID),
-                original_amount=amount,                 # FIXED: was OrginalAmount
-                affective_amount=amount,                # FIXED: was AffectiveAmount
+                original_amount=amount, affective_amount=amount,
                 strace_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                strace_no="100428",                     # FIXED: was StraceNo
+                strace_no="100428",
             ),
         )
 
     async def mock_reverse_transaction(self, ref_num: str, **kwargs):
-        """Simulate SEP ReverseTransaction API response."""
-        self.calls.append({
-            "method": "reverse_transaction",
-            "ref_num": ref_num,
-            "kwargs": kwargs,
-        })
-
+        self.calls.append({"method": "reverse_transaction", "ref_num": ref_num, "kwargs": kwargs})
         from app.payment.services.sep_client import VerifyResponse
-
         if self.should_fail_reverse:
-            return VerifyResponse(
-                success=False,                  # FIXED
-                result_code=-2,                 # FIXED
-                result_description="تراکنش یافت نشد",
-                transaction_detail=None,        # FIXED
-            )
-
-        return VerifyResponse(
-            success=True,                       # FIXED
-            result_code=self.reverse_result_code,
-            result_description="موفق",
-            transaction_detail=None,            # FIXED
-        )
+            return VerifyResponse(success=False, result_code=-2,
+                                  result_description="تراکنش یافت نشد", transaction_detail=None)
+        return VerifyResponse(success=True, result_code=self.reverse_result_code,
+                              result_description="موفق", transaction_detail=None)
 
 
 @pytest.fixture
 def mock_sep():
-    """Provide a configurable mock SEP gateway."""
     return MockSEPGateway()
 
 
 # ─────────────────────────────────────────────────────────────
-# Data Factories
+# Data Factories — accept session as parameter (no module-level dependency)
 # ─────────────────────────────────────────────────────────────
 
 class PaymentFactory:
-    """Create sample payment records for testing."""
-
     @staticmethod
-    async def create(
-        session: AsyncSession,
-        user_id: str,
-        amount: int = 100000,
-        status: str = PaymentStatus.PENDING,
-        ref_num: str = None,
-        res_num: str = None,
-        token: str = None,
-    ) -> Payment:
+    async def create(session: AsyncSession, user_id: str, amount: int = 100000,
+                     status: str = PaymentStatus.PENDING, ref_num: str = None,
+                     res_num: str = None, token: str = None) -> Payment:
         payment = Payment(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
+            id=str(uuid.uuid4()), user_id=user_id,
             res_num=res_num or f"RES_{uuid.uuid4().hex[:12]}",
-            ref_num=ref_num,
-            amount=amount,
-            original_amount=amount,
-            discount_amount=0,
-            terminal_id=str(payment_settings.SEP_TERMINAL_ID),
+            ref_num=ref_num, amount=amount, original_amount=amount,
+            discount_amount=0, terminal_id=str(payment_settings.SEP_TERMINAL_ID),
             token=token or f"tok_{uuid.uuid4().hex[:20]}",
             status=status,
+            verified_at=datetime.now(timezone.utc) if status == PaymentStatus.VERIFIED else None,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -406,18 +363,10 @@ class PaymentFactory:
 
 
 class WalletFactory:
-    """Create sample wallets for testing."""
-
     @staticmethod
-    async def create(
-        session: AsyncSession,
-        user_id: str,
-        balance: int = 0,
-    ) -> Wallet:
+    async def create(session: AsyncSession, user_id: str, balance: int = 0) -> Wallet:
         wallet = Wallet(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            balance=balance,
+            id=str(uuid.uuid4()), user_id=user_id, balance=balance,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -428,32 +377,18 @@ class WalletFactory:
 
 
 class DiscountFactory:
-    """Create sample discount codes for testing."""
-
     @staticmethod
-    async def create(
-        session: AsyncSession,
-        code: str = "TEST20",
-        discount_type: str = DiscountType.PERCENTAGE,
-        discount_value: int = 20,
-        max_discount: int = None,
-        min_purchase: int = 0,
-        max_uses: int = None,
-        per_user_limit: int = 1,
-        is_active: bool = True,
-        valid_from: datetime = None,
-        valid_until: datetime = None,
-    ) -> DiscountCode:
+    async def create(session: AsyncSession, code: str = "TEST20",
+                     discount_type: str = DiscountType.PERCENTAGE,
+                     discount_value: int = 20, max_discount: int = None,
+                     min_purchase: int = 0, max_uses: int = None,
+                     per_user_limit: int = 1, is_active: bool = True,
+                     valid_from: datetime = None, valid_until: datetime = None) -> DiscountCode:
         dc = DiscountCode(
-            id=str(uuid.uuid4()),
-            code=code,
-            discount_type=discount_type,
-            discount_value=discount_value,
-            max_discount=max_discount,
-            min_purchase=min_purchase,
-            max_uses=max_uses,
-            used_count=0,
-            per_user_limit=per_user_limit,
+            id=str(uuid.uuid4()), code=code,
+            discount_type=discount_type, discount_value=discount_value,
+            max_discount=max_discount, min_purchase=min_purchase,
+            max_uses=max_uses, used_count=0, per_user_limit=per_user_limit,
             is_active=is_active,
             valid_from=valid_from or datetime.now(timezone.utc) - timedelta(days=1),
             valid_until=valid_until or datetime.now(timezone.utc) + timedelta(days=30),
@@ -469,11 +404,9 @@ class DiscountFactory:
 def payment_factory():
     return PaymentFactory()
 
-
 @pytest.fixture
 def wallet_factory():
     return WalletFactory()
-
 
 @pytest.fixture
 def discount_factory():

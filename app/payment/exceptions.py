@@ -420,3 +420,13 @@ class SEPConnectionException(SEPGatewayException):
     Network-level failure — DNS resolution, TCP connect, TLS handshake, etc.
     """
     error_code = "SEP_CONNECTION_ERROR"
+
+
+class DuplicateDiscountCodeException(ConflictException):
+    """Raised when trying to create a discount code that already exists."""
+    error_code = "DUPLICATE_DISCOUNT_CODE"
+
+    def __init__(self, code: str = ""):
+        self.code = code
+        self.message = f"Discount code '{code}' already exists"
+        super().__init__(self.message)

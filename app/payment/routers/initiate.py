@@ -99,6 +99,6 @@ async def initiate_payment(
         redirect_url=result["redirect_url"],
         amount=result["amount"],
         original_amount=result["original_amount"],
-        discount_applied=result["discount_amount"],
+        discount_amount=result["discount_amount"],
         discount_code=request.discount_code,
     )

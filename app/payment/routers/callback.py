@@ -106,6 +106,18 @@ async def payment_callback(
             status_code=302,
         )
 
+    # ── NEW: Check if payment is already verified (replay protection) ──
+    if payment.status == PaymentStatus.VERIFIED:
+        logger.info(
+            "callback_already_verified",
+            payment_id=payment.id,
+            ref_num=payment.ref_num,
+        )
+        return RedirectResponse(
+            url=_build_redirect("VERIFIED", payment.id, amount=payment.amount),
+            status_code=302,
+        )
+
     # Update callback data on payment record
     payment.state = callback.state
     payment.status_code = callback.status
@@ -121,7 +133,6 @@ async def payment_callback(
     payment.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
-
     # Check if transaction was successful on SEP's side
     if not callback.is_ok:
         payment.status = PaymentStatus.FAILED
@@ -136,7 +147,7 @@ async def payment_callback(
             status=callback.status,
             description=callback.status_description,
         )
-        metrics.payment_failed(payment_settings.SEP_TERMINAL_ID)
+        metrics.payment_failed(reason=payment_settings.SEP_TERMINAL_ID)
         return RedirectResponse(
             url=_build_redirect("FAILED", payment.id, callback.status_description),
             status_code=302,
@@ -156,7 +167,7 @@ async def payment_callback(
         )
 
     # Double-spending check — has this RefNum been processed before?
-    is_duplicate = await DoubleSpendGuard.is_ref_num_used(db, callback.ref_num, exclude_payment_id=payment.id)
+    is_duplicate = await DoubleSpendGuard.check_ref_num_exists(db, callback.ref_num, exclude_payment_id=payment.id)
     if is_duplicate:
         logger.critical(
             "double_spend_attempt",
@@ -238,7 +249,7 @@ async def payment_callback(
                             error=str(e),
                         )
 
-                    metrics.payment_verified(payment_settings.SEP_TERMINAL_ID)
+                    metrics.payment_verified.labels(terminal_id=payment_settings.SEP_TERMINAL_ID).inc()
 
                     logger.info(
                         "payment_verified_success",
@@ -285,7 +296,7 @@ async def payment_callback(
                 payment.updated_at = datetime.now(timezone.utc)
                 await db.commit()
 
-                metrics.payment_failed(payment_settings.SEP_TERMINAL_ID)
+                metrics.payment_failed(reason=payment_settings.SEP_TERMINAL_ID)
 
                 return RedirectResponse(
                     url=_build_redirect("FAILED", payment.id, verify_result.result_description),

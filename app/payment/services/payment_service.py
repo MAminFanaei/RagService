@@ -288,7 +288,9 @@ class PaymentService:
 
                         await db.commit()
                         duration = time.time() - start_time
-                        metrics.payment_verified(payment.amount, duration)
+                        metrics.payment_verified.labels(terminal_id=payment.terminal_id or "default").inc()
+                        if duration is not None:
+                            metrics._payment_duration.observe(duration)
                         logger.info("payment_verified_success", payment_id=payment.id,
                                     amount=payment.amount, ref_num=payment.ref_num,
                                     duration=round(duration, 3))

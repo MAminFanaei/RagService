@@ -227,18 +227,16 @@ class CallbackData:
     secure_pan: Optional[str] = None
     hashed_card_number: Optional[str] = None
     token: Optional[str] = None
-
+    
     @classmethod
     def from_form_data(cls, data: dict) -> "CallbackData":
         """
         Parse callback data from SEP's POST form data.
 
-        Handles case-sensitive parameter names as documented by SEP.
-        Also handles the fact that some params might come as strings
-        that need to be converted to int.
+        Uses direct string keys matching SEP's exact PascalCase names
+        since SEPParams callback constants use CB_ prefix.
         """
-        def safe_int(value: Any) -> Optional[int]:
-            """Safely convert a value to int, return None if not possible."""
+        def safe_int(value) -> Optional[int]:
             if value is None:
                 return None
             try:
@@ -247,22 +245,19 @@ class CallbackData:
                 return None
 
         return cls(
-            mid=data.get(SEPParams.MID) or data.get("MID"),
-            state=data.get(SEPParams.STATE) or data.get("State"),
-            status=safe_int(data.get(SEPParams.STATUS) or data.get("Status")),
-            rrn=data.get(SEPParams.RRN) or data.get("Rrn") or data.get("RRN"),
-            ref_num=data.get(SEPParams.REF_NUM) or data.get("RefNum"),
-            res_num=data.get(SEPParams.RES_NUM) or data.get("ResNum"),
-            terminal_id=data.get(SEPParams.TERMINAL_ID) or data.get("TerminalId"),
-            trace_no=data.get(SEPParams.TRACE_NO) or data.get("TraceNo"),
-            amount=safe_int(data.get(SEPParams.AMOUNT) or data.get("Amount")),
-            wage=safe_int(data.get(SEPParams.WAGE) or data.get("Wage")),
-            secure_pan=data.get(SEPParams.SECURE_PAN) or data.get("SecurePan"),
-            hashed_card_number=(
-                data.get(SEPParams.HASHED_CARD_NUMBER)
-                or data.get("HashedCardNumber")
-            ),
-            token=data.get(SEPParams.TOKEN) or data.get("Token"),
+            mid=data.get("MID"),
+            state=data.get("State"),
+            status=safe_int(data.get("Status")),
+            rrn=data.get("RRN") or data.get("Rrn"),
+            ref_num=data.get("RefNum"),
+            res_num=data.get("ResNum"),
+            terminal_id=data.get("TerminalId"),
+            trace_no=data.get("TraceNo"),
+            amount=safe_int(data.get("Amount")),
+            wage=safe_int(data.get("Wage")),
+            secure_pan=data.get("SecurePan"),
+            hashed_card_number=data.get("HashedCardNumber"),
+            token=data.get("Token"),
         )
 
     @property
@@ -579,8 +574,8 @@ class SEPClient:
         # CRITICAL: TerminalNumber is INTEGER here, not string!
         # SEP docs: "TerminalNumber: Int64"
         payload = {
-            SEPParams.REF_NUM: ref_num,
-            SEPParams.TERMINAL_NUMBER: terminal_number,
+            SEPParams.VR_REF_NUM: ref_num,
+            SEPParams.VR_TERMINAL_NUMBER: terminal_number,
         }
 
         start_time = track_time()
@@ -723,8 +718,8 @@ class SEPClient:
 
         # Same parameter format as Verify
         payload = {
-            SEPParams.REF_NUM: ref_num,
-            SEPParams.TERMINAL_NUMBER: terminal_number,
+            SEPParams.VR_REF_NUM: ref_num,
+            SEPParams.VR_TERMINAL_NUMBER: terminal_number,
         }
 
         logger.info(

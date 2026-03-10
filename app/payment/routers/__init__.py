@@ -13,13 +13,13 @@ from app.payment.routers.reverse import router as reverse_router
 from app.payment.routers.query import router as query_router
 from app.payment.routers.wallet import router as wallet_router
 from app.payment.routers.discount import router as discount_router
-
+from app.payment.routers.metrics import router as metrics_router
 # Main payment router — all sub-routers are included here
 payment_router = APIRouter()
 
 # Health (no auth required)
 payment_router.include_router(health_router)
-
+payment_router.include_router(metrics_router)
 # Payment operations
 payment_router.include_router(initiate_router)
 payment_router.include_router(callback_router)

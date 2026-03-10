@@ -26,11 +26,11 @@ class TestGetPayment:
         return f"/api/v1/payment/{pid}"
 
     async def test_get_own_payment(
-        self, client, test_user, auth_headers, payment_factory
+        self, client, test_user, auth_headers, payment_factory,payment_session_factory
     ):
         """User gets their own payment → success."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             payment = await payment_factory.create(
                 session, user_id=test_user.id, amount=100000
             )
@@ -66,11 +66,11 @@ class TestListPayments:
     URL = "/api/v1/payment/list"
 
     async def test_list_own_payments(
-        self, client, test_user, auth_headers, payment_factory
+        self, client, test_user, auth_headers, payment_factory , payment_session_factory
     ):
         """User lists their payments → returns only their payments."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             await payment_factory.create(session, user_id=test_user.id, amount=50000)
             await payment_factory.create(session, user_id=test_user.id, amount=75000)
             await payment_factory.create(session, user_id=test_user.id, amount=100000)
@@ -82,11 +82,11 @@ class TestListPayments:
         assert len(data["payments"]) == 3
 
     async def test_list_with_status_filter(
-        self, client, test_user, auth_headers, payment_factory
+        self, client, test_user, auth_headers, payment_factory , payment_session_factory
     ):
         """Filter by status → only matching payments."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             await payment_factory.create(
                 session, user_id=test_user.id,
                 status=PaymentStatus.VERIFIED, amount=100000,
@@ -128,11 +128,11 @@ class TestListReverses:
         return f"/api/v1/payment/{pid}/reverses"
 
     async def test_list_reverses_empty(
-        self, client, test_user, auth_headers, payment_factory
+        self, client, test_user, auth_headers, payment_factory , payment_session_factory
     ):
         """Payment with no reverses → empty list."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             payment = await payment_factory.create(
                 session, user_id=test_user.id, amount=100000
             )

@@ -115,11 +115,11 @@ class TestDiscountValidate:
     URL = "/api/v1/payment/discount/validate"
 
     async def test_validate_valid_code(
-        self, client, auth_headers, discount_factory
+        self, client, auth_headers, discount_factory , payment_session_factory
     ):
         """Valid active code → returns discount preview."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             await discount_factory.create(
                 session,
                 code="VALID20",
@@ -138,11 +138,10 @@ class TestDiscountValidate:
         assert data["discount_amount"] == 20000  # 20% of 100000
 
     async def test_validate_expired_code(
-        self, client, auth_headers, discount_factory
+        self, client, auth_headers, discount_factory,payment_session_factory
     ):
         """Expired code → invalid."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+        async with payment_session_factory() as session:
             await discount_factory.create(
                 session,
                 code="EXPIRED",
@@ -171,11 +170,11 @@ class TestDiscountValidate:
         assert response.status_code in (200, 400, 404)
 
     async def test_validate_below_min_purchase(
-        self, client, auth_headers, discount_factory
+        self, client, auth_headers, discount_factory , payment_session_factory
     ):
         """Amount below minimum purchase → invalid."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+        
+        async with payment_session_factory() as session:
             await discount_factory.create(
                 session,
                 code="MINPURCHASE",
@@ -192,11 +191,10 @@ class TestDiscountValidate:
             assert response.json()["valid"] is False
 
     async def test_percentage_discount_with_cap(
-        self, client, auth_headers, discount_factory
+        self, client, auth_headers, discount_factory,payment_session_factory
     ):
         """20% of 1,000,000 = 200,000 but max_discount = 50,000 → capped."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+        async with payment_session_factory() as session:
             await discount_factory.create(
                 session,
                 code="CAPPED",
@@ -215,11 +213,10 @@ class TestDiscountValidate:
         assert data["discount_amount"] == 50000  # Capped
 
     async def test_fixed_discount(
-        self, client, auth_headers, discount_factory
+        self, client, auth_headers, discount_factory,payment_session_factory
     ):
         """Fixed 30,000 off 100,000 → discount = 30,000."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+        async with payment_session_factory() as session:
             await discount_factory.create(
                 session,
                 code="FIXED30K",

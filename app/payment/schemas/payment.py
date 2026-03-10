@@ -94,7 +94,7 @@ class PaymentInitiateResponse(BaseModel):
     redirect_url: str
     amount: int = Field(description="Final amount after discount (Rials)")
     original_amount: int = Field(description="Original amount before discount (Rials)")
-    discount_applied: int = Field(default=0, description="Discount amount (Rials)")
+    discount_amount: int = Field(default=0, description="Discount amount (Rials)")
     discount_code: Optional[str] = None
 
 

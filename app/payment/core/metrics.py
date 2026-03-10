@@ -1,409 +1,205 @@
 """
 Prometheus Metrics for Payment Service.
 
-Provides counters, histograms, and gauges to monitor:
-- Payment initiation, callback, and verification
-- Reverse transactions
-- Wallet operations (credit/debit)
-- Discount code usage
-- SEP API call latency and error rates
-- Double-spending prevention events
-- Lock acquisition metrics
-
-All metrics are prefixed with 'payment_' to avoid collisions with
-other services' metrics.
-
-Usage:
-    from app.payment.core.metrics import metrics
-
-    # Record a successful payment
-    metrics.payment_initiated.labels(terminal_id="12345").inc()
-
-    # Time an SEP API call
-    with metrics.sep_api_latency.labels(endpoint="verify").time():
-        result = await sep_client.verify(...)
-
-    # In your FastAPI app, expose metrics:
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-    
-    @app.get("/metrics")
-    async def prometheus_metrics():
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+Central metrics singleton used by all payment services.
 """
 
 import time
-import functools
-from typing import Callable, Any
-
 import structlog
-from prometheus_client import Counter, Histogram, Gauge, Info
+from prometheus_client import Counter, Histogram, Gauge, REGISTRY
 
 logger = structlog.get_logger()
 
 
+def _safe_metric(metric_cls, name, description, labelnames=None, **kwargs):
+    """Create a Prometheus metric, or return existing one if already registered."""
+    try:
+        if labelnames:
+            return metric_cls(name, description, labelnames, **kwargs)
+        return metric_cls(name, description, **kwargs)
+    except ValueError:
+        return REGISTRY._names_to_collectors[name]
+
+
 class PaymentMetrics:
-    """
-    Centralized Prometheus metrics for the payment service.
-    
-    All metric names are prefixed with 'payment_' and follow
-    Prometheus naming conventions.
-    """
+    """Payment service Prometheus metrics — singleton."""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self):
-        # ─────────────────────────────────────────────────────
-        # Payment Flow Metrics
-        # ─────────────────────────────────────────────────────
-        
-        self.payment_initiated = Counter(
-            "payment_initiated_total",
-            "Total number of payment initiations (token requests to SEP)",
-            ["terminal_id"],
+        if hasattr(self, "_initialized"):
+            return
+        self._initialized = True
+
+        # --- Counters ---
+        self._payment_initiated = _safe_metric(
+            Counter, "payment_initiated_total", "Total payments initiated",
+        )
+        self._payment_token_obtained = _safe_metric(
+            Counter, "payment_token_obtained_total",
+            "Total payment tokens obtained",
+            labelnames=["terminal_id"],
+        )
+        self._payment_token_failed = _safe_metric(
+            Counter, "payment_token_failed_total",
+            "Total payment token failures",
+            labelnames=["terminal_id", "error_code"],
+        )
+        self._payment_verified = _safe_metric(
+            Counter, "payment_verified_total",
+            "Total payments successfully verified",
+            labelnames=["terminal_id"],
+        )
+        self._payment_verify_failed = _safe_metric(
+            Counter, "payment_verify_failed_total",
+            "Total payment verify failures",
+            labelnames=["terminal_id", "result_code"],
+        )
+        self._payment_failed = _safe_metric(
+            Counter, "payment_failed_total", "Total payments failed",
+            labelnames=["reason"],
+        )
+        self._payment_reversed_counter = _safe_metric(
+            Counter, "payment_reversed_total", "Total payments reversed",
+        )
+        self._double_spend_blocked = _safe_metric(
+            Counter, "payment_double_spend_blocked_total",
+            "Total double-spend attempts blocked",
+        )
+        self._reverse_completed = _safe_metric(
+            Counter, "payment_reverse_completed_total",
+            "Total reversals completed",
+            labelnames=["terminal_id"],
+        )
+        self._reverse_failed = _safe_metric(
+            Counter, "payment_reverse_failed_total",
+            "Total reversals failed",
+            labelnames=["terminal_id", "result_code"],
+        )
+        self._wallet_credited = _safe_metric(
+            Counter, "wallet_credited_total", "Total wallet credits",
+        )
+        self._wallet_debited = _safe_metric(
+            Counter, "wallet_debited_total", "Total wallet debits",
+        )
+        self._discount_used = _safe_metric(
+            Counter, "discount_used_total", "Total discount codes used",
+        )
+        self._sep_api_calls = _safe_metric(
+            Counter, "sep_api_calls_total", "Total SEP API calls",
+            labelnames=["endpoint", "success", "error_type"],
         )
 
-        self.payment_token_obtained = Counter(
-            "payment_token_obtained_total",
-            "Successful token acquisitions from SEP",
-            ["terminal_id"],
-        )
-
-        self.payment_token_failed = Counter(
-            "payment_token_failed_total",
-            "Failed token acquisitions from SEP",
-            ["terminal_id", "error_code"],
-        )
-
-        self.payment_callback_received = Counter(
-            "payment_callback_received_total",
-            "Total callbacks received from SEP",
-            ["state", "status_code"],
-        )
-
-        self.payment_verified = Counter(
-            "payment_verified_total",
-            "Successfully verified payments",
-            ["terminal_id"],
-        )
-
-        self.payment_verify_failed = Counter(
-            "payment_verify_failed_total",
-            "Failed payment verifications",
-            ["terminal_id", "result_code"],
-        )
-
-        self.payment_completed = Counter(
-            "payment_completed_total",
-            "Fully completed payments (verified + wallet credited)",
-            ["terminal_id"],
-        )
-
-        self.payment_amount_total = Counter(
-            "payment_amount_rials_total",
-            "Total amount of successful payments in Rials",
-            ["terminal_id"],
-        )
-
-        # ─────────────────────────────────────────────────────
-        # Reverse Metrics
-        # ─────────────────────────────────────────────────────
-
-        self.reverse_requested = Counter(
-            "payment_reverse_requested_total",
-            "Total reverse transaction requests",
-            ["terminal_id"],
-        )
-
-        self.reverse_completed = Counter(
-            "payment_reverse_completed_total",
-            "Successfully completed reverses",
-            ["terminal_id"],
-        )
-
-        self.reverse_failed = Counter(
-            "payment_reverse_failed_total",
-            "Failed reverse attempts",
-            ["terminal_id", "result_code"],
-        )
-
-        # ─────────────────────────────────────────────────────
-        # Wallet Metrics
-        # ─────────────────────────────────────────────────────
-
-        self.wallet_credited = Counter(
-            "payment_wallet_credited_total",
-            "Total wallet credit operations",
-            [],
-        )
-
-        self.wallet_credit_amount = Counter(
-            "payment_wallet_credit_amount_rials_total",
-            "Total amount credited to wallets in Rials",
-            [],
-        )
-
-        self.wallet_debit_amount = Counter(
-            "payment_wallet_debit_amount_rials_total",
-            "Total amount debited from wallets in Rials",
-            [],
-        )
-
-        # ─────────────────────────────────────────────────────
-        # Discount Metrics
-        # ─────────────────────────────────────────────────────
-
-        self.discount_applied = Counter(
-            "payment_discount_applied_total",
-            "Number of discount codes successfully applied",
-            ["discount_type"],
-        )
-
-        self.discount_amount_total = Counter(
-            "payment_discount_amount_rials_total",
-            "Total discount amount given in Rials",
-            ["discount_type"],
-        )
-
-        self.discount_validation_failed = Counter(
-            "payment_discount_validation_failed_total",
-            "Failed discount code validations",
-            ["reason"],
-        )
-
-        # ─────────────────────────────────────────────────────
-        # SEP API Latency
-        # ─────────────────────────────────────────────────────
-
-        self.sep_api_latency = Histogram(
-            "payment_sep_api_latency_seconds",
-            "Latency of SEP API calls in seconds",
-            ["endpoint"],  # token, verify, reverse
+        # --- Histograms ---
+        self._payment_duration = _safe_metric(
+            Histogram, "payment_duration_seconds",
+            "Payment processing duration",
             buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
         )
-
-        self.sep_api_errors = Counter(
-            "payment_sep_api_errors_total",
-            "SEP API call errors (network, timeout, etc.)",
-            ["endpoint", "error_type"],
-        )
-
-        # ─────────────────────────────────────────────────────
-        # Payment Processing Duration
-        # ─────────────────────────────────────────────────────
-
-        self.payment_processing_duration = Histogram(
-            "payment_processing_duration_seconds",
-            "End-to-end payment processing duration (callback to completion)",
-            ["status"],  # success, failed
+        self._sep_api_duration = _safe_metric(
+            Histogram, "sep_api_duration_seconds",
+            "SEP API call duration",
+            labelnames=["endpoint"],
             buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
         )
-
-        self.reverse_processing_duration = Histogram(
-            "payment_reverse_processing_duration_seconds",
-            "Reverse transaction processing duration",
-            ["status"],
-            buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+        self._payment_amount = _safe_metric(
+            Histogram, "payment_amount_rials", "Payment amounts in Rials",
+            buckets=[10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 50000000],
         )
 
-        # ─────────────────────────────────────────────────────
-        # Security Metrics
-        # ─────────────────────────────────────────────────────
-
-        self.double_spend_prevented = Counter(
-            "payment_double_spend_prevented_total",
-            "Number of double-spending attempts prevented",
-            ["layer"],  # database, redis_lock, application_check
-        )
-
-        self.lock_acquired = Counter(
-            "payment_lock_acquired_total",
-            "Distributed lock acquisitions",
-            ["resource_type"],  # payment, reverse, wallet, callback
-        )
-
-        self.lock_failed = Counter(
-            "payment_lock_failed_total",
-            "Failed lock acquisitions",
-            ["resource_type"],
-        )
-
-        self.lock_wait_duration = Histogram(
-            "payment_lock_wait_duration_seconds",
-            "Time spent waiting for lock acquisition",
-            ["resource_type"],
-            buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
-        )
-
-        # ─────────────────────────────────────────────────────
-        # Active Operations Gauge
-        # ─────────────────────────────────────────────────────
-
-        self.active_payments = Gauge(
-            "payment_active_processing",
+        # --- Gauges ---
+        self._active_payments = _safe_metric(
+            Gauge, "payment_active_processing",
             "Number of payments currently being processed",
         )
 
-        self.active_reverses = Gauge(
-            "payment_active_reverses",
-            "Number of reverse transactions currently being processed",
-        )
+    # ── Properties for direct access (used by sep_client.py) ──
 
-        # ─────────────────────────────────────────────────────
-        # Service Info
-        # ─────────────────────────────────────────────────────
+    @property
+    def payment_token_obtained(self):
+        return self._payment_token_obtained
 
-        self.service_info = Info(
-            "payment_service",
-            "Payment service metadata",
-        )
-        self.service_info.info({
-            "version": "1.0.0",
-            "psp": "saman_electronic_payment",
-            "psp_name": "sep",
-        })
+    @property
+    def payment_token_failed(self):
+        return self._payment_token_failed
 
-    # ─────────────────────────────────────────────────────────
-    # Convenience Methods
-    # ─────────────────────────────────────────────────────────
+    @property
+    def payment_verified(self):
+        return self._payment_verified
 
-    def record_payment_success(
-        self,
-        terminal_id: str,
-        amount: int,
-        processing_time: float,
-    ):
-        """Record a fully successful payment (verified + wallet credited)."""
-        self.payment_completed.labels(terminal_id=terminal_id).inc()
-        self.payment_amount_total.labels(terminal_id=terminal_id).inc(amount)
-        self.payment_processing_duration.labels(status="success").observe(
-            processing_time
-        )
-        logger.info(
-            "metric_payment_success",
-            terminal_id=terminal_id,
-            amount=amount,
-            processing_time=round(processing_time, 3),
-        )
+    @property
+    def payment_verify_failed(self):
+        return self._payment_verify_failed
 
-    def record_payment_failure(
-        self,
-        terminal_id: str,
-        reason: str,
-        processing_time: float,
-    ):
-        """Record a failed payment."""
-        self.payment_verify_failed.labels(
-            terminal_id=terminal_id, result_code=reason
+    @property
+    def reverse_completed(self):
+        return self._reverse_completed
+
+    @property
+    def reverse_failed(self):
+        return self._reverse_failed
+
+    # ── Convenience Methods ──
+
+    def payment_initiated(self):
+        self._payment_initiated.inc()
+
+    def payment_failed(self, reason: str = "unknown"):
+        self._payment_failed.labels(reason=reason).inc()
+
+    def payment_reversed(self, amount: int = 0):
+        self._payment_reversed_counter.inc()
+        if amount:
+            self._payment_amount.observe(amount)
+
+    def double_spend_blocked(self):
+        self._double_spend_blocked.inc()
+
+    def reverse_failed_metric(self):
+        self._reverse_failed.labels(terminal_id="unknown", result_code="unknown").inc()
+
+    def wallet_credited(self, amount: int = 0):
+        self._wallet_credited.inc()
+        if amount:
+            self._payment_amount.observe(amount)
+
+    def wallet_debited(self, amount: int = 0):
+        self._wallet_debited.inc()
+
+    def discount_used(self):
+        self._discount_used.inc()
+
+    def record_sep_api_call(self, endpoint: str, duration: float = 0,
+                            success: bool = True, error_type: str = "none"):
+        self._sep_api_calls.labels(
+            endpoint=endpoint,
+            success=str(success),
+            error_type=error_type,
         ).inc()
-        self.payment_processing_duration.labels(status="failed").observe(
-            processing_time
-        )
-        logger.info(
-            "metric_payment_failure",
-            terminal_id=terminal_id,
-            reason=reason,
-            processing_time=round(processing_time, 3),
-        )
+        if duration:
+            self._sep_api_duration.labels(endpoint=endpoint).observe(duration)
 
-    def record_reverse_success(
-        self,
-        terminal_id: str,
-        amount: int,
-        processing_time: float,
-    ):
-        """Record a successful reverse."""
-        self.reverse_completed.labels(terminal_id=terminal_id).inc()
-        self.reverse_processing_duration.labels(status="success").observe(
-            processing_time
-        )
-        logger.info(
-            "metric_reverse_success",
-            terminal_id=terminal_id,
-            amount=amount,
-            processing_time=round(processing_time, 3),
-        )
+    def payment_processing_start(self):
+        self._active_payments.inc()
 
-    def record_reverse_failure(
-        self,
-        terminal_id: str,
-        reason: str,
-        processing_time: float,
-    ):
-        """Record a failed reverse."""
-        self.reverse_failed.labels(
-            terminal_id=terminal_id, result_code=reason
-        ).inc()
-        self.reverse_processing_duration.labels(status="failed").observe(
-            processing_time
-        )
-        logger.info(
-            "metric_reverse_failure",
-            terminal_id=terminal_id,
-            reason=reason,
-            processing_time=round(processing_time, 3),
-        )
-
-    def record_discount_applied(
-        self,
-        discount_type: str,
-        discount_amount: int,
-    ):
-        """Record a successfully applied discount."""
-        self.discount_applied.labels(discount_type=discount_type).inc()
-        self.discount_amount_total.labels(discount_type=discount_type).inc(
-            discount_amount
-        )
-
-    def record_double_spend_attempt(self, layer: str):
-        """Record a prevented double-spending attempt."""
-        self.double_spend_prevented.labels(layer=layer).inc()
-        logger.warning("double_spend_prevented", layer=layer)
-
-    def record_sep_api_call(
-        self,
-        endpoint: str,
-        duration: float,
-        success: bool,
-        error_type: str = "",
-    ):
-        """Record an SEP API call with timing."""
-        self.sep_api_latency.labels(endpoint=endpoint).observe(duration)
-        if not success:
-            self.sep_api_errors.labels(
-                endpoint=endpoint, error_type=error_type
-            ).inc()
+    def payment_processing_end(self):
+        self._active_payments.dec()
 
 
-def track_time() -> float:
-    """Return current time for duration tracking. Use with time.monotonic()."""
-    return time.monotonic()
+def track_time():
+    """Return current time for duration tracking."""
+    return time.time()
 
 
-def duration_since(start: float) -> float:
-    """Calculate duration since start time."""
-    return time.monotonic() - start
+def duration_since(start_time: float) -> float:
+    """Calculate duration since start_time."""
+    return time.time() - start_time
 
 
-def timed_metric(metric_histogram, **labels):
-    """
-    Decorator to automatically time a function and record to a histogram.
-    
-    Usage:
-        @timed_metric(metrics.sep_api_latency, endpoint="verify")
-        async def verify_transaction(...):
-            ...
-    """
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            start = time.monotonic()
-            try:
-                result = await func(*args, **kwargs)
-                return result
-            finally:
-                duration = time.monotonic() - start
-                metric_histogram.labels(**labels).observe(duration)
-        return wrapper
-    return decorator
-
-
-# Singleton instance — import this in services
+# Singleton
 metrics = PaymentMetrics()

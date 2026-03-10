@@ -1,8 +1,5 @@
 """
 Payment Query Router.
-
-Endpoints for querying payment status, listing payments,
-and listing reverses.
 """
 
 import structlog
@@ -24,47 +21,7 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
-@router.get(
-    "/{payment_id}",
-    summary="Get payment details",
-    description="Get details of a specific payment by ID.",
-)
-async def get_payment(
-    payment_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get a specific payment's details."""
-    result = await db.execute(
-        select(Payment).where(
-            Payment.id == payment_id,
-            Payment.user_id == current_user.id,
-        )
-    )
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        raise PaymentNotFoundException(f"Payment {payment_id} not found")
-
-    return {
-        "id": payment.id,  # FIXED: was "payment_id"
-        "res_num": payment.res_num,
-        "ref_num": payment.ref_num,
-        "amount": payment.amount,
-        "original_amount": payment.original_amount,
-        "discount_amount": payment.discount_amount,
-        "status": payment.status,
-        "state": payment.state,
-        "rrn": payment.rrn,
-        "trace_no": payment.trace_no,
-        "secure_pan": payment.secure_pan,
-        "failure_reason": payment.failure_reason,
-        "description": payment.description,
-        "created_at": payment.created_at.isoformat() if payment.created_at else None,
-        "verified_at": payment.verified_at.isoformat() if payment.verified_at else None,
-        "updated_at": payment.updated_at.isoformat() if payment.updated_at else None,
-    }
-
+# ── IMPORTANT: /list MUST come BEFORE /{payment_id} ──
 
 @router.get(
     "/list",
@@ -84,14 +41,12 @@ async def list_payments(
     if status:
         query = query.where(Payment.status == status)
 
-    # Count total
     count_query = select(func.count(Payment.id)).where(Payment.user_id == current_user.id)
     if status:
         count_query = count_query.where(Payment.status == status)
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
 
-    # Get paginated results
     query = query.order_by(Payment.created_at.desc()).limit(limit).offset(offset)
     result = await db.execute(query)
     payments = result.scalars().all()
@@ -119,6 +74,48 @@ async def list_payments(
 
 
 @router.get(
+    "/{payment_id}",
+    summary="Get payment details",
+    description="Get details of a specific payment by ID.",
+)
+async def get_payment(
+    payment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a specific payment's details."""
+    result = await db.execute(
+        select(Payment).where(
+            Payment.id == payment_id,
+            Payment.user_id == current_user.id,
+        )
+    )
+    payment = result.scalar_one_or_none()
+
+    if not payment:
+        raise PaymentNotFoundException(f"Payment {payment_id} not found")
+
+    return {
+        "id": payment.id,
+        "res_num": payment.res_num,
+        "ref_num": payment.ref_num,
+        "amount": payment.amount,
+        "original_amount": payment.original_amount,
+        "discount_amount": payment.discount_amount,
+        "status": payment.status,
+        "state": payment.state,
+        "rrn": payment.rrn,
+        "trace_no": payment.trace_no,
+        "secure_pan": payment.secure_pan,
+        "failure_reason": payment.failure_reason,
+        "description": payment.description,
+        "created_at": payment.created_at.isoformat() if payment.created_at else None,
+        "verified_at": payment.verified_at.isoformat() if payment.verified_at else None,
+        "updated_at": payment.updated_at.isoformat() if payment.updated_at else None,
+    }
+
+
+@router.get(
     "/{payment_id}/reverses",
     summary="List reverses for a payment",
     description="Get all reverse attempts for a specific payment.",
@@ -129,7 +126,6 @@ async def list_reverses(
     db: AsyncSession = Depends(get_db),
 ):
     """List all reverses for a payment."""
-    # Verify payment belongs to user
     payment_result = await db.execute(
         select(Payment).where(
             Payment.id == payment_id,
@@ -141,7 +137,6 @@ async def list_reverses(
     if not payment:
         raise PaymentNotFoundException(f"Payment {payment_id} not found")
 
-    # Get reverses
     result = await db.execute(
         select(Reverse)
         .where(Reverse.payment_id == payment_id)

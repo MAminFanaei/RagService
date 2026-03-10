@@ -61,6 +61,7 @@ class TestPaymentCallback:
         test_user,
         mock_sep,
         payment_factory,
+        payment_session_factory,
     ):
         """
         Happy path:
@@ -71,8 +72,8 @@ class TestPaymentCallback:
         5. User is redirected to frontend
         """
         # Create a pending payment
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+        
+        async with payment_session_factory() as session:
             payment = await payment_factory.create(
                 session,
                 user_id=test_user.id,
@@ -107,10 +108,11 @@ class TestPaymentCallback:
         client: AsyncClient,
         test_user,
         payment_factory,
+        payment_session_factory
     ):
         """State != OK → payment failed, no wallet credit."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             payment = await payment_factory.create(
                 session,
                 user_id=test_user.id,
@@ -139,10 +141,11 @@ class TestPaymentCallback:
         client: AsyncClient,
         test_user,
         payment_factory,
+        payment_session_factory
     ):
         """Empty RefNum from SEP → transaction had issues."""
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             payment = await payment_factory.create(
                 session,
                 user_id=test_user.id,
@@ -188,13 +191,14 @@ class TestPaymentCallback:
         test_user,
         mock_sep,
         payment_factory,
+        payment_session_factory
     ):
         """
         Verify succeeds but amount doesn't match →
         auto-reverse and mark as AMOUNT_MISMATCH.
         """
-        from tests.payment.conftest import TestSessionLocal
-        async with TestSessionLocal() as session:
+         
+        async with payment_session_factory() as session:
             payment = await payment_factory.create(
                 session,
                 user_id=test_user.id,

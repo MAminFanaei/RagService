@@ -111,7 +111,11 @@ class ReverseService:
         # Check time window (50 minutes)
         now = datetime.now(timezone.utc)
         if payment.verified_at:
-            elapsed = (now - payment.verified_at).total_seconds()
+            verified_at = payment.verified_at
+            # SQLite returns naive datetimes — make them aware
+            if verified_at.tzinfo is None:
+                verified_at = verified_at.replace(tzinfo=timezone.utc)
+            elapsed = (now - verified_at).total_seconds()
             elapsed_minutes = int(elapsed / 60)
 
             if elapsed_minutes > payment_settings.PAYMENT_REVERSE_WINDOW_MINUTES:
@@ -139,6 +143,7 @@ class ReverseService:
                     id=str(uuid.uuid4()),
                     payment_id=payment.id,
                     ref_num=payment.ref_num,
+                    amount=payment.amount,
                     reason=reason,
                     status=ReverseStatus.PENDING,
                 )
@@ -211,7 +216,7 @@ class ReverseService:
                     payment.status = PaymentStatus.REVERSED
                     await db.commit()
 
-                    metrics.payment_reversed(payment.amount)
+                    metrics.payment_reversed(amount=payment.amount)
 
                     logger.info(
                         "reverse_completed",

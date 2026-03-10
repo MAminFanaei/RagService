@@ -342,7 +342,7 @@ async def acquire_lock(
             resource=resource,
             timeout=lock_timeout,
         )
-        raise LockAcquisitionException(resource=resource)
+        raise LockAcquisitionException(lock_key=resource)
 
     logger.info(
         "acquire_lock_success",
