@@ -158,9 +158,8 @@ class RAGEngine:
             question = sanitize_user_input(state["question"])
 
             if settings.ENABLE_CONVERSATION_MEMORY:
-                conversation_history = state.get("conversation_history", "No previous context.")
-                short_history_list = conversation_history[-settings.ENHANCER_MEMORY:] if conversation_history else []
-                conversation_history = "\n".join(short_history_list) if short_history_list else "No previous context."
+                conversation_history = state.get("conversation_history", "No previous context.")[-settings.ENHANCER_MEMORY:]
+                conversation_history = "\n".join(conversation_history)
             else:
                 conversation_history = "No history given - consider this your first message with the user"
 
@@ -221,7 +220,7 @@ class RAGEngine:
             
         def route_query(state: State) -> Literal["retrieve", "end"]:
             """Conditional Edge."""
-            # Default to retrieve if status is missing/null
+            # Default is to retrieve if status is missing/null
             status = state.get("enhancement_status", "ACCEPTED")
             if status == "REJECTED":
                 return "end"

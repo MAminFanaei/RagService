@@ -32,25 +32,24 @@ class TestReverseTransaction:
         return f"/api/v1/payment/{payment_id}/reverse"
 
     async def test_successful_reverse(
-        self, client, test_user, auth_headers, mock_sep, payment_factory,payment_session_factory, wallet_factory
-        ):
+        self, client, test_user, auth_headers, mock_sep, payment_factory,
+        payment_db, wallet_factory,
+    ):
         """Reverse a verified payment within time window → success."""
-         
         ref_num = f"REF_{uuid.uuid4().hex[:10]}"
-        
-        async with payment_session_factory() as session:
-            await wallet_factory.create(
-                session,
-                user_id=test_user.id,
-                balance=200000,
-            )
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.VERIFIED,
-                ref_num=ref_num,
-            )
+
+        await wallet_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            balance=200000,
+        )
+        payment = await payment_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.VERIFIED,
+            ref_num=ref_num,
+        )
 
         with patch(
             "app.payment.services.sep_client.SEPClient.reverse_transaction",
@@ -67,17 +66,15 @@ class TestReverseTransaction:
         assert data["status"] == "COMPLETED"
 
     async def test_reverse_non_verified_payment(
-        self, client, test_user, auth_headers, payment_factory,payment_session_factory
+        self, client, test_user, auth_headers, payment_factory, payment_db,
     ):
         """Cannot reverse a PENDING payment → 400."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.PENDING,
-            )
+        payment = await payment_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.PENDING,
+        )
 
         response = await client.post(
             self._url(payment.id),
@@ -87,18 +84,16 @@ class TestReverseTransaction:
         assert response.status_code == 400
 
     async def test_reverse_already_reversed(
-        self, client, test_user, auth_headers, payment_factory,payment_session_factory
+        self, client, test_user, auth_headers, payment_factory, payment_db,
     ):
         """Cannot reverse an already reversed payment → 409."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.REVERSED,
-                ref_num=f"REF_{uuid.uuid4().hex[:10]}",
-            )
+        payment = await payment_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.REVERSED,
+            ref_num=f"REF_{uuid.uuid4().hex[:10]}",
+        )
 
         response = await client.post(
             self._url(payment.id),
@@ -116,25 +111,24 @@ class TestReverseTransaction:
         assert response.status_code in (401, 403)
 
     async def test_sep_reverse_failure(
-        self, client, test_user, auth_headers, mock_sep, payment_factory,payment_session_factory, wallet_factory
+        self, client, test_user, auth_headers, mock_sep, payment_factory,
+        payment_db, wallet_factory,
     ):
         """SEP returns error for reverse → 502."""
-         
         ref_num = f"REF_{uuid.uuid4().hex[:10]}"
-        
-        async with payment_session_factory() as session:
-            await wallet_factory.create(
-                session,
-                user_id=test_user.id,
-                balance=200000,
-            )
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.VERIFIED,
-                ref_num=ref_num,
-            )
+
+        await wallet_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            balance=200000,
+        )
+        payment = await payment_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.VERIFIED,
+            ref_num=ref_num,
+        )
 
         mock_sep.should_fail_reverse = True
 

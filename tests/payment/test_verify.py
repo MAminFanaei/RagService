@@ -47,15 +47,13 @@ class TestVerifyTransaction:
         }
 
     async def test_result_code_0_amounts_match(
-        self, client, test_user, mock_sep, payment_factory, payment_session_factory
+        self, client, test_user, mock_sep, payment_factory, payment_db,
     ):
         """ResultCode=0, amounts match → VERIFIED, wallet credited."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session, user_id=test_user.id, amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        payment = await payment_factory.create(
+            payment_db, user_id=test_user.id, amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         mock_sep.verify_amount = 100000
         mock_sep.verify_result_code = 0
@@ -74,15 +72,13 @@ class TestVerifyTransaction:
                "success" in resp.headers.get("location", "").lower()
 
     async def test_result_code_0_amounts_mismatch(
-        self, client, test_user, mock_sep, payment_factory,payment_session_factory
+        self, client, test_user, mock_sep, payment_factory, payment_db,
     ):
         """ResultCode=0 but amounts don't match → AMOUNT_MISMATCH, auto-reverse."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session, user_id=test_user.id, amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        payment = await payment_factory.create(
+            payment_db, user_id=test_user.id, amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         mock_sep.verify_amount = 50000  # Mismatch!
         mock_sep.verify_result_code = 0
@@ -105,15 +101,13 @@ class TestVerifyTransaction:
         assert len(reverse_calls) >= 1
 
     async def test_result_code_negative_2_not_found(
-        self, client, test_user, mock_sep, payment_factory,payment_session_factory
+        self, client, test_user, mock_sep, payment_factory, payment_db,
     ):
         """ResultCode=-2 → transaction not found at SEP → FAILED."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session, user_id=test_user.id, amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        payment = await payment_factory.create(
+            payment_db, user_id=test_user.id, amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         mock_sep.should_fail_verify = True
 
@@ -131,15 +125,13 @@ class TestVerifyTransaction:
                "error" in resp.headers.get("location", "").lower()
 
     async def test_verify_timeout_retries(
-        self, client, test_user, mock_sep, payment_factory,payment_session_factory
+        self, client, test_user, mock_sep, payment_factory, payment_db,
     ):
         """Network timeout → retries → all fail → VERIFY_TIMEOUT."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session, user_id=test_user.id, amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        payment = await payment_factory.create(
+            payment_db, user_id=test_user.id, amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         mock_sep.should_timeout = True
 

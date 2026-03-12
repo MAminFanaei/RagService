@@ -1,20 +1,15 @@
 # tests/payment/conftest.py
-"""
-Payment Service Test Fixtures
-"""
 
 import pytest
 import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import AsyncGenerator, Generator, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import AsyncGenerator, Optional
+from unittest.mock import AsyncMock, MagicMock
 
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-)
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event
 
 from app.core.database import Base, get_db, get_redis
 from app.core.security import create_access_token
@@ -25,38 +20,18 @@ from app.payment.models.payment import Payment
 from app.payment.models.reverse import Reverse
 from app.payment.models.wallet import Wallet
 from app.payment.models.discount import DiscountCode
-from app.payment.core.constants import (
-    PaymentStatus,
-    DiscountType,
-)
+from app.payment.core.constants import PaymentStatus, DiscountType
 from app.payment.config import payment_settings
 
-# ─────────────────────────────────────────────────────────────
-# Session factory — fixture-scoped, bound to root async_engine
-# ─────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def payment_session_factory(async_engine):
-    """
-    Build an async_sessionmaker bound to the shared test engine.
-    Created per-test so it always points at the living engine.
-    """
-    return async_sessionmaker(
-        bind=async_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-    )
-
 
 # ─────────────────────────────────────────────────────────────
-# Table setup — ONE fixture, no duplicates
+# Tables — ONCE per session (not per test!)
 # ─────────────────────────────────────────────────────────────
 
-@pytest.fixture(autouse=True)
-async def setup_payment_tables(async_engine):
-    """Create all tables before each test, drop after."""
+@pytest.fixture(scope="session")
+async def payment_tables(async_engine):
+    """Create tables once, drop once. Importing models above
+    registers them with Base.metadata before create_all runs."""
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -65,12 +40,44 @@ async def setup_payment_tables(async_engine):
 
 
 # ─────────────────────────────────────────────────────────────
+# Savepoint-wrapped session — instant rollback per test
+#
+# Instead of DROP+CREATE (seconds), rollback takes microseconds.
+# Service code calls commit() → commits the SAVEPOINT only.
+# Teardown rolls back the OUTER transaction → everything gone.
+# ─────────────────────────────────────────────────────────────
+
+@pytest.fixture
+async def payment_db(async_engine, payment_tables):
+    connection = await async_engine.connect()
+    transaction = await connection.begin()
+    await connection.begin_nested()  # SAVEPOINT
+
+    session = AsyncSession(bind=connection, expire_on_commit=False)
+
+    @event.listens_for(session.sync_session, "after_transaction_end")
+    def restart_savepoint(sync_session, trans):
+        if trans.nested and not trans._parent.nested:
+            sync_session.begin_nested()
+
+    yield session
+
+    await session.close()
+    try:
+        await transaction.rollback()
+    except Exception:
+        pass
+    try:
+        await connection.close()
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────
 # Mock Redis  (unchanged)
 # ─────────────────────────────────────────────────────────────
 
 class FakeRedis:
-    """Minimal fake Redis for testing (no real Redis needed)."""
-
     def __init__(self):
         self._store: dict = {}
         self._lock: Optional[asyncio.Lock] = None
@@ -180,11 +187,11 @@ def override_redis(fake_redis):
 
 
 # ─────────────────────────────────────────────────────────────
-# Test User & Auth — use payment_session_factory, not module-level
+# Test User & Auth — use payment_db (savepoint-wrapped)
 # ─────────────────────────────────────────────────────────────
 
 @pytest.fixture
-async def test_user(setup_payment_tables, payment_session_factory) -> User:
+async def test_user(payment_db) -> User:
     user = User(
         id=str(uuid.uuid4()),
         username="testuser",
@@ -194,15 +201,14 @@ async def test_user(setup_payment_tables, payment_session_factory) -> User:
         is_admin=False,
         is_verified=True,
     )
-    async with payment_session_factory() as session:
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
+    payment_db.add(user)
+    await payment_db.flush()
+    await payment_db.refresh(user)
     return user
 
 
 @pytest.fixture
-async def admin_user(setup_payment_tables, payment_session_factory) -> User:
+async def admin_user(payment_db) -> User:
     user = User(
         id=str(uuid.uuid4()),
         username="adminuser",
@@ -212,10 +218,9 @@ async def admin_user(setup_payment_tables, payment_session_factory) -> User:
         is_admin=True,
         is_verified=True,
     )
-    async with payment_session_factory() as session:
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
+    payment_db.add(user)
+    await payment_db.flush()
+    await payment_db.refresh(user)
     return user
 
 
@@ -232,24 +237,18 @@ def admin_auth_headers(admin_user) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# Test HTTP Client — builds get_test_db from the fixture factory
+# Test HTTP Client — shares the SAME savepoint session
 # ─────────────────────────────────────────────────────────────
 
 @pytest.fixture
 async def client(
     override_redis,
-    payment_session_factory,
+    payment_db,
 ) -> AsyncGenerator[AsyncClient, None]:
-    """Async HTTP test client with test DB and fake Redis."""
+    async def override_get_db():
+        yield payment_db          # ← same session = same savepoint
 
-    async def get_test_db() -> AsyncGenerator[AsyncSession, None]:
-        async with payment_session_factory() as session:
-            try:
-                yield session
-            finally:
-                await session.close()
-
-    app.dependency_overrides[get_db] = get_test_db
+    app.dependency_overrides[get_db] = override_get_db
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -263,7 +262,6 @@ async def client(
 # ─────────────────────────────────────────────────────────────
 
 class MockSEPGateway:
-    # ... (keep exactly as-is — no engine involvement)
     def __init__(self):
         self.token_counter = 0
         self.should_fail_token = False
@@ -337,7 +335,7 @@ def mock_sep():
 
 
 # ─────────────────────────────────────────────────────────────
-# Data Factories — accept session as parameter (no module-level dependency)
+# Data Factories — use flush() not commit() (savepoint-friendly)
 # ─────────────────────────────────────────────────────────────
 
 class PaymentFactory:
@@ -357,7 +355,7 @@ class PaymentFactory:
             updated_at=datetime.now(timezone.utc),
         )
         session.add(payment)
-        await session.commit()
+        await session.flush()
         await session.refresh(payment)
         return payment
 
@@ -371,7 +369,7 @@ class WalletFactory:
             updated_at=datetime.now(timezone.utc),
         )
         session.add(wallet)
-        await session.commit()
+        await session.flush()
         await session.refresh(wallet)
         return wallet
 
@@ -395,7 +393,7 @@ class DiscountFactory:
             created_at=datetime.now(timezone.utc),
         )
         session.add(dc)
-        await session.commit()
+        await session.flush()
         await session.refresh(dc)
         return dc
 

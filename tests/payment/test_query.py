@@ -26,14 +26,12 @@ class TestGetPayment:
         return f"/api/v1/payment/{pid}"
 
     async def test_get_own_payment(
-        self, client, test_user, auth_headers, payment_factory,payment_session_factory
+        self, client, test_user, auth_headers, payment_factory, payment_db,
     ):
         """User gets their own payment → success."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session, user_id=test_user.id, amount=100000
-            )
+        payment = await payment_factory.create(
+            payment_db, user_id=test_user.id, amount=100000
+        )
 
         response = await client.get(
             self._url(payment.id), headers=auth_headers
@@ -66,14 +64,12 @@ class TestListPayments:
     URL = "/api/v1/payment/list"
 
     async def test_list_own_payments(
-        self, client, test_user, auth_headers, payment_factory , payment_session_factory
+        self, client, test_user, auth_headers, payment_factory, payment_db,
     ):
         """User lists their payments → returns only their payments."""
-         
-        async with payment_session_factory() as session:
-            await payment_factory.create(session, user_id=test_user.id, amount=50000)
-            await payment_factory.create(session, user_id=test_user.id, amount=75000)
-            await payment_factory.create(session, user_id=test_user.id, amount=100000)
+        await payment_factory.create(payment_db, user_id=test_user.id, amount=50000)
+        await payment_factory.create(payment_db, user_id=test_user.id, amount=75000)
+        await payment_factory.create(payment_db, user_id=test_user.id, amount=100000)
 
         response = await client.get(self.URL, headers=auth_headers)
         assert response.status_code == 200
@@ -82,20 +78,18 @@ class TestListPayments:
         assert len(data["payments"]) == 3
 
     async def test_list_with_status_filter(
-        self, client, test_user, auth_headers, payment_factory , payment_session_factory
+        self, client, test_user, auth_headers, payment_factory, payment_db,
     ):
         """Filter by status → only matching payments."""
-         
-        async with payment_session_factory() as session:
-            await payment_factory.create(
-                session, user_id=test_user.id,
-                status=PaymentStatus.VERIFIED, amount=100000,
-                ref_num=f"REF_{uuid.uuid4().hex[:10]}",
-            )
-            await payment_factory.create(
-                session, user_id=test_user.id,
-                status=PaymentStatus.FAILED, amount=50000,
-            )
+        await payment_factory.create(
+            payment_db, user_id=test_user.id,
+            status=PaymentStatus.VERIFIED, amount=100000,
+            ref_num=f"REF_{uuid.uuid4().hex[:10]}",
+        )
+        await payment_factory.create(
+            payment_db, user_id=test_user.id,
+            status=PaymentStatus.FAILED, amount=50000,
+        )
 
         response = await client.get(
             f"{self.URL}?status=VERIFIED",
@@ -128,14 +122,12 @@ class TestListReverses:
         return f"/api/v1/payment/{pid}/reverses"
 
     async def test_list_reverses_empty(
-        self, client, test_user, auth_headers, payment_factory , payment_session_factory
+        self, client, test_user, auth_headers, payment_factory, payment_db,
     ):
         """Payment with no reverses → empty list."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session, user_id=test_user.id, amount=100000
-            )
+        payment = await payment_factory.create(
+            payment_db, user_id=test_user.id, amount=100000
+        )
 
         response = await client.get(
             self._url(payment.id), headers=auth_headers

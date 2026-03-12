@@ -30,18 +30,16 @@ class TestWallet:
         assert response.status_code == 200
         data = response.json()
         assert data["balance"] == 0
-
+        
     async def test_wallet_balance_after_credit(
-        self, client, test_user, auth_headers, wallet_factory,payment_session_factory
+        self, client, test_user, auth_headers, wallet_factory, payment_db,
     ):
         """Wallet with existing balance → returns correct amount."""
-
-        async with payment_session_factory() as session:
-            await wallet_factory.create(
-                session,
-                user_id=test_user.id,
-                balance=500000,
-            )
+        await wallet_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            balance=500000,
+        )
 
         response = await client.get(
             self.BALANCE_URL,

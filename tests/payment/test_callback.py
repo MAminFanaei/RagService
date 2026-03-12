@@ -61,7 +61,7 @@ class TestPaymentCallback:
         test_user,
         mock_sep,
         payment_factory,
-        payment_session_factory,
+        payment_db,           # ← changed
     ):
         """
         Happy path:
@@ -71,15 +71,13 @@ class TestPaymentCallback:
         4. Wallet is credited
         5. User is redirected to frontend
         """
-        # Create a pending payment
-        
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        # Create a pending payment — use payment_db directly
+        payment = await payment_factory.create(
+            payment_db,          # ← changed
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         mock_sep.verify_amount = 100000
 
@@ -108,17 +106,16 @@ class TestPaymentCallback:
         client: AsyncClient,
         test_user,
         payment_factory,
-        payment_session_factory
+        payment_db,           # ← changed
     ):
         """State != OK → payment failed, no wallet credit."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        # use payment_db directly
+        payment = await payment_factory.create(
+            payment_db,          # ← changed
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         callback_data = self._build_callback_data(
             res_num=payment.res_num,
@@ -141,17 +138,16 @@ class TestPaymentCallback:
         client: AsyncClient,
         test_user,
         payment_factory,
-        payment_session_factory
+        payment_db,           # ← changed
     ):
         """Empty RefNum from SEP → transaction had issues."""
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        # use payment_db directly
+        payment = await payment_factory.create(
+            payment_db,          # ← changed
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         callback_data = self._build_callback_data(
             res_num=payment.res_num,
@@ -191,20 +187,19 @@ class TestPaymentCallback:
         test_user,
         mock_sep,
         payment_factory,
-        payment_session_factory
+        payment_db,           # ← changed
     ):
         """
         Verify succeeds but amount doesn't match →
         auto-reverse and mark as AMOUNT_MISMATCH.
         """
-         
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        # use payment_db directly
+        payment = await payment_factory.create(
+            payment_db,          # ← changed
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         # SEP says 50000 but we expected 100000
         mock_sep.verify_amount = 50000

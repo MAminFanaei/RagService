@@ -113,17 +113,16 @@ class TestInitiatePayment:
         auth_headers: dict,
         mock_sep,
         discount_factory,
-        payment_session_factory
+        payment_db,
     ):
         """Payment with valid discount code → reduced amount."""
-        async with payment_session_factory() as session:
-            await discount_factory.create(
-                session,
-                code="SAVE20",
-                discount_type="PERCENTAGE",
-                discount_value=20,
-                max_discount=50000,
-            )
+        await discount_factory.create(
+            payment_db,
+            code="SAVE20",
+            discount_type="PERCENTAGE",
+            discount_value=20,
+            max_discount=50000,
+        )
 
         with patch(
             "app.payment.services.sep_client.SEPClient.request_token",

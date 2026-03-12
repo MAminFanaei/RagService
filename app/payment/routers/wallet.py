@@ -65,7 +65,7 @@ async def get_wallet_balance(
         db=db,
         user_id=current_user.id,
     )
-
+    await db.commit()
     return WalletResponse(
         wallet_id=result["wallet_id"],
         user_id=result["user_id"],
@@ -134,7 +134,7 @@ async def get_wallet_transactions(
         offset=offset,
         tx_type=tx_type,
     )
-
+    await db.commit()
     # Convert model instances to response schemas
     tx_responses = []
     for tx in result["transactions"]:

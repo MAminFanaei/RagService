@@ -48,21 +48,18 @@ class TestDoubleSpendingPrevention:
         test_user,
         mock_sep,
         payment_factory,
-        payment_session_factory
+        payment_db,
     ):
         """
         Send the same RefNum callback twice.
         Wallet should be credited exactly once.
         """
-         
-
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        payment = await payment_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         ref_num = f"REF_UNIQUE_{uuid.uuid4().hex[:10]}"
         mock_sep.verify_amount = 100000
@@ -100,24 +97,21 @@ class TestDoubleSpendingPrevention:
         test_user,
         mock_sep,
         payment_factory,
-        payment_session_factory
+        payment_db,
     ):
         """
         If payment is already VERIFIED in our DB,
         return the existing result without calling SEP again.
         """
-         
-
         ref_num = f"REF_VERIFIED_{uuid.uuid4().hex[:10]}"
 
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.VERIFIED,
-                ref_num=ref_num,
-            )
+        payment = await payment_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.VERIFIED,
+            ref_num=ref_num,
+        )
 
         callback_data = self._build_callback(payment.res_num, ref_num)
 
@@ -146,22 +140,19 @@ class TestDoubleSpendingPrevention:
         test_user,
         mock_sep,
         payment_factory,
-        payment_session_factory
+        payment_db,
     ):
         """
         Two simultaneous callbacks with same RefNum.
         Only one should acquire the lock and process.
         Redis distributed lock prevents the race condition.
         """
-         
-
-        async with payment_session_factory() as session:
-            payment = await payment_factory.create(
-                session,
-                user_id=test_user.id,
-                amount=100000,
-                status=PaymentStatus.TOKEN_OBTAINED,
-            )
+        payment = await payment_factory.create(
+            payment_db,
+            user_id=test_user.id,
+            amount=100000,
+            status=PaymentStatus.TOKEN_OBTAINED,
+        )
 
         ref_num = f"REF_CONCURRENT_{uuid.uuid4().hex[:10]}"
         mock_sep.verify_amount = 100000

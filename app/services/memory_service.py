@@ -186,7 +186,7 @@ class ConversationMemoryService:
 
     def estimate_token_count(self, text: str) -> int:
         """Rough estimation of token count (1 token ≈ 4 chars)."""
-        return len(text) // 4
+        return len(text) // 5
     
     def truncate_to_token_limit(
         self,
