@@ -16,7 +16,7 @@ SEP Documentation Notes:
 
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # =============================================================================
@@ -84,7 +84,7 @@ class PaymentInitiateResponse(BaseModel):
             "redirect_url": "https://sep.shaparak.ir/OnlinePG/SendToken?token=xxx",
             "amount": 400000,
             "original_amount": 500000,
-            "discount_applied": 100000,
+            "discount_amount": 100000,
             "discount_code": "WELCOME20"
         }
     """
@@ -107,8 +107,9 @@ class PaymentCallbackData(BaseModel):
     - All parameter names are CASE-SENSITIVE
     - State is the string status, Status is the numeric code
     
-    Note: These field names MUST match SEP's exact casing.
-    We use Field(alias=...) where our Python convention differs.
+    Note: This is a DOCUMENTATION schema mirroring SEP's exact format.
+    Actual parsing is done by CallbackData in sep_client.py.
+    These field names MUST match SEP's exact casing.
     """
     # Required fields — always sent by SEP
     MID: Optional[str] = Field(None, description="Terminal ID (same as TerminalId)")
@@ -132,9 +133,7 @@ class PaymentCallbackData(BaseModel):
         description="Amount deducted from card (for discount terminals)"
     )
 
-    class Config:
-        # Allow extra fields — SEP may add new params in future
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class PaymentDetailResponse(BaseModel):
@@ -144,15 +143,15 @@ class PaymentDetailResponse(BaseModel):
     Used for:
     - GET /api/v1/payment/{payment_id}
     - Individual items in payment list
+    
+    Uses from_attributes=True to auto-populate from Payment model.
     """
-    payment_id: str
-    user_id: str
+    id: str
     res_num: str
     ref_num: Optional[str] = None
     amount: int
     original_amount: int
     discount_amount: int = 0
-    discount_code: Optional[str] = None
     status: str
     state: Optional[str] = None
     rrn: Optional[str] = None
@@ -160,13 +159,13 @@ class PaymentDetailResponse(BaseModel):
     secure_pan: Optional[str] = None
     verified_amount: Optional[int] = None
     failure_reason: Optional[str] = None
+    description: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     callback_at: Optional[datetime] = None
     verified_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaymentListQuery(BaseModel):
@@ -221,6 +220,8 @@ class PaymentListResponse(BaseModel):
 
 # =============================================================================
 # SEP API SCHEMAS (exact field names from SEP documentation)
+# These are documentation schemas matching SEP's API format exactly.
+# Actual communication uses dataclasses in sep_client.py.
 # =============================================================================
 
 
@@ -255,9 +256,7 @@ class SEPTokenRequest(BaseModel):
         description="Token validity in minutes (20-3600, default 20)"
     )
 
-    class Config:
-        # Serialize using field names as-is (PascalCase for SEP)
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SEPTokenResponse(BaseModel):
@@ -340,8 +339,7 @@ class SEPVerifyInfo(BaseModel):
         description="Trace number string"
     )
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class SEPVerifyResponse(BaseModel):
@@ -374,5 +372,4 @@ class SEPVerifyResponse(BaseModel):
     )
     Success: bool = Field(description="Overall success flag")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")

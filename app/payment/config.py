@@ -12,6 +12,12 @@ about its own variables (extra="ignore" ensures no conflicts).
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
+from app.payment.core.constants import (
+    MIN_PAYMENT_AMOUNT as _DEFAULT_MIN_AMOUNT,
+    MAX_PAYMENT_AMOUNT as _DEFAULT_MAX_AMOUNT,
+    SEP_REVERSE_WINDOW_MINUTES as _DEFAULT_REVERSE_WINDOW,
+)
+
 
 class PaymentSettings(BaseSettings):
     """
@@ -52,8 +58,8 @@ class PaymentSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────
     # Payment Amount Limits (in Rials)
     # ─────────────────────────────────────────────────────────
-    MIN_PAYMENT_AMOUNT: int = 10000
-    MAX_PAYMENT_AMOUNT: int = 500000000
+    MIN_PAYMENT_AMOUNT: int = _DEFAULT_MIN_AMOUNT
+    MAX_PAYMENT_AMOUNT: int = _DEFAULT_MAX_AMOUNT
     
     # ─────────────────────────────────────────────────────────
     # Redis Distributed Lock Settings
@@ -79,7 +85,7 @@ class PaymentSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────
     
     # SEP allows reverse within 50 minutes of transaction
-    PAYMENT_REVERSE_WINDOW_MINUTES: int = 50
+    PAYMENT_REVERSE_WINDOW_MINUTES: int = _DEFAULT_REVERSE_WINDOW
     
     # HTTP client timeout for SEP API calls (seconds)
     SEP_HTTP_TIMEOUT: int = 30

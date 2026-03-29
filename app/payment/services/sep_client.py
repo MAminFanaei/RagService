@@ -35,6 +35,7 @@ Usage:
     result = await sep_client.reverse_transaction(ref_num="abc123")
 """
 
+import asyncio
 import httpx
 import structlog
 from typing import Optional, Any
@@ -43,8 +44,13 @@ from dataclasses import dataclass, field
 from app.payment.config import payment_settings
 from app.payment.core.constants import (
     SEPParams,
-    SEP_RESULT_CODES,
+    SEPState,
+    SEPResultCode,
     SEP_CALLBACK_STATUS_CODES,
+    SEP_VERIFY_RESULT_CODES,
+    SEP_SUCCESS_STATUS,
+    SEP_TOKEN_SUCCESS,
+    SEP_TOKEN_FAILURE,
 )
 from app.payment.core.metrics import metrics, track_time, duration_since
 from app.payment.exceptions import (
@@ -83,13 +89,13 @@ class TokenResponse:
     @classmethod
     def from_sep_response(cls, data: dict) -> "TokenResponse":
         """Parse SEP's JSON response into TokenResponse."""
-        status = data.get("status", -1)
+        status = data.get(SEPParams.STATUS, SEP_TOKEN_FAILURE)
         return cls(
-            success=status == 1,
+            success=status == SEP_TOKEN_SUCCESS,
             status=status,
-            token=data.get("token"),
-            error_code=data.get("errorCode"),
-            error_desc=data.get("errorDesc"),
+            token=data.get(SEPParams.TOKEN),
+            error_code=data.get(SEPParams.ERROR_CODE),
+            error_desc=data.get(SEPParams.ERROR_DESC),
             raw_response=data,
         )
 
@@ -119,15 +125,15 @@ class VerifyTransactionDetail:
         if not data:
             return None
         return cls(
-            rrn=data.get("RRN"),
-            ref_num=data.get("RefNum"),
-            masked_pan=data.get("MaskedPan"),
-            hashed_pan=data.get("HashedPan"),
-            terminal_number=data.get("TerminalNumber"),
-            original_amount=data.get("OrginalAmount"),  # SEP's typo
-            affective_amount=data.get("AffectiveAmount"),
-            strace_date=data.get("StraceDate"),
-            strace_no=data.get("StraceNo"),
+            rrn=data.get(SEPParams.VI_RRN),
+            ref_num=data.get(SEPParams.VI_REF_NUM),
+            masked_pan=data.get(SEPParams.VI_MASKED_PAN),
+            hashed_pan=data.get(SEPParams.VI_HASHED_PAN),
+            terminal_number=data.get(SEPParams.VI_TERMINAL_NUMBER),
+            original_amount=data.get(SEPParams.VI_ORGINAL_AMOUNT),  # SEP's typo
+            affective_amount=data.get(SEPParams.VI_AFFECTIVE_AMOUNT),
+            strace_date=data.get(SEPParams.VI_STRACE_DATE),
+            strace_no=data.get(SEPParams.VI_STRACE_NO),
         )
 
 
@@ -159,11 +165,11 @@ class VerifyResponse:
     @classmethod
     def from_sep_response(cls, data: dict) -> "VerifyResponse":
         """Parse SEP's Verify/Reverse JSON response."""
-        detail_data = data.get("TransactionDetail")
+        detail_data = data.get(SEPParams.VR_TRANSACTION_DETAIL)
         return cls(
-            success=data.get("Success", False),
-            result_code=data.get("ResultCode", -999),
-            result_description=data.get("ResultDescription"),
+            success=data.get(SEPParams.VR_SUCCESS, False),
+            result_code=data.get(SEPParams.VR_RESULT_CODE, -999),
+            result_description=data.get(SEPParams.VR_RESULT_DESCRIPTION),
             transaction_detail=VerifyTransactionDetail.from_sep_response(detail_data),
             raw_response=data,
         )
@@ -171,17 +177,17 @@ class VerifyResponse:
     @property
     def is_successful(self) -> bool:
         """Check if the verify/reverse was truly successful."""
-        return self.success and self.result_code == 0
+        return self.success and self.result_code == SEPResultCode.SUCCESS
 
     @property
     def is_duplicate(self) -> bool:
         """Check if this is a duplicate verify/reverse request."""
-        return self.result_code == 2
+        return self.result_code == SEPResultCode.DUPLICATE_REQUEST
 
     @property
     def is_already_reversed(self) -> bool:
         """Check if the transaction was already reversed."""
-        return self.result_code == 5
+        return self.result_code == SEPResultCode.TRANSACTION_ALREADY_REVERSED
 
     @property
     def verified_amount(self) -> Optional[int]:
@@ -212,6 +218,8 @@ class CallbackData:
     - Wage: Fee amount (for multi-settlement merchants)
     - SecurePan: Masked card number (e.g., "621986****8080")
     - HashedCardNumber: SHA256 hashed card number
+    - AffectiveAmount: Amount deducted from card (discount terminals)
+    - Token: Transaction token
     """
 
     mid: Optional[str] = None
@@ -226,15 +234,15 @@ class CallbackData:
     wage: Optional[int] = None
     secure_pan: Optional[str] = None
     hashed_card_number: Optional[str] = None
+    affective_amount: Optional[int] = None
     token: Optional[str] = None
-    
+
     @classmethod
     def from_form_data(cls, data: dict) -> "CallbackData":
         """
         Parse callback data from SEP's POST form data.
 
-        Uses direct string keys matching SEP's exact PascalCase names
-        since SEPParams callback constants use CB_ prefix.
+        Uses SEPParams.CB_* constants for exact case-sensitive parameter names.
         """
         def safe_int(value) -> Optional[int]:
             if value is None:
@@ -245,25 +253,26 @@ class CallbackData:
                 return None
 
         return cls(
-            mid=data.get("MID"),
-            state=data.get("State"),
-            status=safe_int(data.get("Status")),
-            rrn=data.get("RRN") or data.get("Rrn"),
-            ref_num=data.get("RefNum"),
-            res_num=data.get("ResNum"),
-            terminal_id=data.get("TerminalId"),
-            trace_no=data.get("TraceNo"),
-            amount=safe_int(data.get("Amount")),
-            wage=safe_int(data.get("Wage")),
-            secure_pan=data.get("SecurePan"),
-            hashed_card_number=data.get("HashedCardNumber"),
-            token=data.get("Token"),
+            mid=data.get(SEPParams.CB_MID),
+            state=data.get(SEPParams.CB_STATE),
+            status=safe_int(data.get(SEPParams.CB_STATUS)),
+            rrn=data.get(SEPParams.CB_RRN) or data.get("Rrn"),
+            ref_num=data.get(SEPParams.CB_REF_NUM),
+            res_num=data.get(SEPParams.CB_RES_NUM),
+            terminal_id=data.get(SEPParams.CB_TERMINAL_ID),
+            trace_no=data.get(SEPParams.CB_TRACE_NO),
+            amount=safe_int(data.get(SEPParams.CB_AMOUNT)),
+            wage=safe_int(data.get(SEPParams.CB_WAGE)),
+            secure_pan=data.get(SEPParams.CB_SECURE_PAN),
+            hashed_card_number=data.get(SEPParams.CB_HASHED_CARD),
+            affective_amount=safe_int(data.get(SEPParams.CB_AFFECTIVE_AMOUNT)),
+            token=data.get(SEPParams.CB_TOKEN),
         )
 
     @property
     def is_ok(self) -> bool:
         """Check if SEP reports the transaction as successful."""
-        return self.state == "OK" and self.status == 2
+        return self.state == SEPState.OK and self.status == SEP_SUCCESS_STATUS
 
     @property
     def has_ref_num(self) -> bool:
@@ -315,15 +324,16 @@ class SEPClient:
         Get or create the httpx async client.
 
         Uses a persistent client for connection pooling.
-        Timeout is set to 30 seconds — SEP can be slow.
+        Timeout is configured via SEP_HTTP_TIMEOUT from config.
         """
         if self._client is None or self._client.is_closed:
+            http_timeout = float(payment_settings.SEP_HTTP_TIMEOUT)
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(
-                    connect=10.0,    # 10s to establish connection
-                    read=30.0,       # 30s to read response (SEP can be slow)
-                    write=10.0,      # 10s to send request
-                    pool=10.0,       # 10s to get connection from pool
+                    connect=10.0,           # 10s to establish connection
+                    read=http_timeout,      # From config (default 30s)
+                    write=10.0,             # 10s to send request
+                    pool=10.0,              # 10s to get connection from pool
                 ),
                 # Do NOT follow redirects — we handle them explicitly
                 follow_redirects=False,
@@ -382,7 +392,7 @@ class SEPClient:
                   Total charged to buyer = amount + wage.
                   We don't use this (per requirements).
             token_expiry_min: Optional. Token validity in minutes (20-3600).
-                             Default is 20 minutes if not sent.
+                             Default is SEP_TOKEN_EXPIRY_MIN from config.
 
         Returns:
             TokenResponse with success status and token (or error details).
@@ -398,7 +408,7 @@ class SEPClient:
         # Build request payload — EXACT parameter names from SEP docs
         # SEP docs: "سیستم نسبت به حروف بزرگ و کوچک حساس است"
         payload: dict[str, Any] = {
-            SEPParams.ACTION: "token",
+            SEPParams.ACTION: SEPParams.ACTION_VALUE_TOKEN,
             SEPParams.TERMINAL_ID: terminal_id,
             SEPParams.AMOUNT: amount,
             SEPParams.RES_NUM: res_num,
@@ -410,11 +420,14 @@ class SEPClient:
             payload[SEPParams.CELL_NUMBER] = cell_number
         if wage is not None:
             payload[SEPParams.WAGE] = wage
-        if token_expiry_min is not None:
+
+        # Token expiry: use provided value, fall back to config default
+        expiry = token_expiry_min or payment_settings.SEP_TOKEN_EXPIRY_MIN
+        if expiry:
             # SEP clamps this to 20-3600 range automatically,
             # but we do it ourselves for clarity in logs
-            clamped = max(20, min(3600, token_expiry_min))
-            payload["TokenExpiryInMin"] = clamped
+            clamped = max(20, min(3600, expiry))
+            payload[SEPParams.TOKEN_EXPIRY] = clamped
 
         logger.info(
             "sep_token_request",
@@ -437,9 +450,9 @@ class SEPClient:
             logger.info(
                 "sep_token_response",
                 status_code=response.status_code,
-                sep_status=response_data.get("status"),
+                sep_status=response_data.get(SEPParams.STATUS),
                 duration=round(duration, 3),
-                has_token=bool(response_data.get("token")),
+                has_token=bool(response_data.get(SEPParams.TOKEN)),
             )
 
             result = TokenResponse.from_sep_response(response_data)
@@ -650,7 +663,6 @@ class SEPClient:
 
                 if attempt < retries:
                     # Wait before retry — SEP docs say keep trying within 30 min
-                    import asyncio
                     await asyncio.sleep(delay * attempt)  # Linear backoff
                 else:
                     metrics.record_sep_api_call(
@@ -829,10 +841,7 @@ class SEPClient:
         Returns:
             Full URL to redirect the buyer to.
         """
-        base_url = payment_settings.SEP_PAYMENT_URL.replace(
-            "/OnlinePG/OnlinePG", "/OnlinePG/SendToken"
-        )
-        return f"{base_url}?token={token}"
+        return f"{payment_settings.SEP_SEND_TOKEN_URL}?token={token}"
 
     @staticmethod
     def get_result_code_description(result_code: int) -> str:
@@ -843,9 +852,9 @@ class SEPClient:
             result_code: The ResultCode from Verify/Reverse response.
 
         Returns:
-            Description string (English).
+            Description string (English + Persian).
         """
-        info = SEP_RESULT_CODES.get(result_code)
+        info = SEP_VERIFY_RESULT_CODES.get(result_code)
         if info:
             return f"{info.get('description_en', '')} ({info.get('description_fa', '')})"
         return f"Unknown result code: {result_code}"

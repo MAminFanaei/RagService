@@ -17,6 +17,8 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
+from app.payment.core.constants import CURRENCY
+
 
 class WalletResponse(BaseModel):
     """
@@ -37,7 +39,7 @@ class WalletResponse(BaseModel):
     wallet_id: str
     user_id: str
     balance: int = Field(description="Current balance in Rials")
-    currency: str = Field(default="IRR", description="Currency code (always IRR)")
+    currency: str = Field(default=CURRENCY, description="Currency code (always IRR)")
     created_at: datetime
     updated_at: datetime
 

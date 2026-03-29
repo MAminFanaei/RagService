@@ -57,7 +57,7 @@ class Payment(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment="FK to users.id — who initiated this payment",
+        comment="Foreign Key to users.id — who initiated this payment",
     )
 
     # ── SEP Transaction Identifiers ──────────────────────────

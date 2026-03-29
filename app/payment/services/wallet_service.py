@@ -250,8 +250,8 @@ class WalletService:
             "wallet_id": wallet.id,
             "user_id": user_id,
             "balance": wallet.balance,
-            "created_at": wallet.created_at.isoformat() if wallet.created_at else None,
-            "updated_at": wallet.updated_at.isoformat() if wallet.updated_at else None,
+            "created_at": wallet.created_at,
+            "updated_at": wallet.updated_at,
         }
 
     @staticmethod

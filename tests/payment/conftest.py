@@ -61,17 +61,17 @@ async def payment_db(async_engine, payment_tables):
             sync_session.begin_nested()
 
     yield session
-
     await session.close()
     try:
-        await transaction.rollback()
+        if transaction.is_active:
+            await transaction.rollback()
     except Exception:
         pass
     try:
-        await connection.close()
+        if not connection.closed:
+            await connection.close()
     except Exception:
         pass
-
 
 # ─────────────────────────────────────────────────────────────
 # Mock Redis  (unchanged)

@@ -95,6 +95,7 @@ class DiscountCreateRequest(BaseModel):
     valid_until: datetime = Field(
         description="When this code expires"
     )
+    description: Optional[str] = Field(None, max_length=255, description="Description for this discount code")
 
     @field_validator("discount_value")
     @classmethod

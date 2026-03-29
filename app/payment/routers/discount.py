@@ -95,6 +95,7 @@ async def create_discount_code(
         per_user_limit=request.per_user_limit,
         valid_from=request.valid_from,
         valid_until=request.valid_until,
+        description=request.description,
     )
     await db.commit()
 

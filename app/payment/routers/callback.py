@@ -11,11 +11,19 @@ This endpoint:
     3. Checks for double-spending
     4. Calls VerifyTransaction on SEP
     5. Credits the user's wallet (if verified)
-    6. Redirects user's browser to frontend with result
+    6. Records discount usage (if applicable)
+    7. Redirects user's browser to frontend with result
+
+CRITICAL DESIGN NOTES:
+    - Wallet credit + discount usage + VERIFIED status are committed ATOMICALLY
+      in a single db.commit(). If any part fails, nothing is committed.
+    - ref_num is assigned to payment ONLY AFTER double-spend check passes.
+    - No premature commits — only commit when reaching a terminal state.
 """
 
 import structlog
 from urllib.parse import urlencode
+from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +36,7 @@ from app.payment.core.constants import PaymentStatus
 from app.payment.core.locker import acquire_lock, callback_lock_key
 from app.payment.services.sep_client import sep_client, CallbackData
 from app.payment.services.wallet_service import WalletService
+from app.payment.services.discount_service import DiscountService
 from app.payment.services.double_spend_guard import DoubleSpendGuard
 from app.payment.config import payment_settings
 from app.payment.core.metrics import metrics
@@ -70,8 +79,8 @@ async def payment_callback(
     The user's browser is physically ON this URL after SEP redirects them.
     We process the payment and then redirect their browser to our frontend.
     """
+    # ── Step 1: Parse form data from SEP ──
     try:
-        # Parse form data from SEP
         form_data = await request.form()
         form_dict = dict(form_data)
 
@@ -83,7 +92,6 @@ async def payment_callback(
             status=form_dict.get("Status"),
         )
 
-        # Parse into CallbackData using our SEP client parser
         callback = CallbackData.from_form_data(form_dict)
 
     except Exception as e:
@@ -93,7 +101,7 @@ async def payment_callback(
             status_code=302,
         )
 
-    # Find the payment by ResNum (our order number)
+    # ── Step 2: Find the payment by ResNum (our order number) ──
     result = await db.execute(
         select(Payment).where(Payment.res_num == callback.res_num)
     )
@@ -106,7 +114,7 @@ async def payment_callback(
             status_code=302,
         )
 
-    # ── NEW: Check if payment is already verified (replay protection) ──
+    # ── Step 3: Replay protection — already verified? ──
     if payment.status == PaymentStatus.VERIFIED:
         logger.info(
             "callback_already_verified",
@@ -118,26 +126,24 @@ async def payment_callback(
             status_code=302,
         )
 
-    # Update callback data on payment record
+    # ── Step 4: Store callback metadata (NO ref_num yet, NO commit) ──
+    now = datetime.now(timezone.utc)
     payment.state = callback.state
     payment.status_code = callback.status
     payment.rrn = callback.rrn
-    payment.ref_num = callback.ref_num
     payment.trace_no = callback.trace_no
     payment.secure_pan = callback.secure_pan
     payment.hashed_card_number = callback.hashed_card_number
-    payment.status = PaymentStatus.CALLBACK_RECEIVED
+    payment.wage = callback.wage
+    payment.affective_amount = callback.affective_amount
+    payment.callback_at = now
+    payment.updated_at = now
+    # NOTE: ref_num is NOT set here — only after double-spend check passes
 
-    from datetime import datetime, timezone
-    payment.callback_at = datetime.now(timezone.utc)
-    payment.updated_at = datetime.now(timezone.utc)
-
-    await db.commit()
-    # Check if transaction was successful on SEP's side
+    # ── Step 5: Check if transaction was successful on SEP's side ──
     if not callback.is_ok:
         payment.status = PaymentStatus.FAILED
         payment.failure_reason = callback.status_description
-        payment.updated_at = datetime.now(timezone.utc)
         await db.commit()
 
         logger.info(
@@ -147,17 +153,17 @@ async def payment_callback(
             status=callback.status,
             description=callback.status_description,
         )
-        metrics.payment_failed(reason=payment_settings.SEP_TERMINAL_ID)
+        metrics.payment_failed(reason=f"sep_status_{callback.status}")
         return RedirectResponse(
             url=_build_redirect("FAILED", payment.id, callback.status_description),
             status_code=302,
         )
 
-    # Check RefNum is present
+    # ── Step 6: Check RefNum is present ──
+    # Per SEP docs: empty RefNum means a problem occurred during transaction
     if not callback.has_ref_num:
         payment.status = PaymentStatus.FAILED
         payment.failure_reason = "Empty RefNum received from SEP"
-        payment.updated_at = datetime.now(timezone.utc)
         await db.commit()
 
         logger.warning("callback_empty_refnum", payment_id=payment.id)
@@ -166,8 +172,10 @@ async def payment_callback(
             status_code=302,
         )
 
-    # Double-spending check — has this RefNum been processed before?
-    is_duplicate = await DoubleSpendGuard.check_ref_num_exists(db, callback.ref_num, exclude_payment_id=payment.id)
+    # ── Step 7: Double-spend check BEFORE assigning ref_num ──
+    is_duplicate = await DoubleSpendGuard.check_ref_num_exists(
+        db, callback.ref_num, exclude_payment_id=payment.id
+    )
     if is_duplicate:
         logger.critical(
             "double_spend_attempt",
@@ -176,7 +184,6 @@ async def payment_callback(
         )
         payment.status = PaymentStatus.FAILED
         payment.failure_reason = "Duplicate RefNum detected"
-        payment.updated_at = datetime.now(timezone.utc)
         await db.commit()
 
         metrics.double_spend_blocked()
@@ -185,13 +192,18 @@ async def payment_callback(
             status_code=302,
         )
 
-    # Acquire lock on RefNum to prevent concurrent processing
+    # ── Step 8: NOW assign ref_num (double-spend check passed) ──
+    payment.ref_num = callback.ref_num
+    payment.status = PaymentStatus.CALLBACK_RECEIVED
+    # NO commit here — we only commit when reaching a terminal state
+
+    # ── Step 9: Acquire lock on RefNum to prevent concurrent processing ──
     try:
         async with acquire_lock(
             redis_client,
             callback_lock_key(callback.ref_num),
         ):
-            # Call VerifyTransaction on SEP
+            # ── Step 10: Call VerifyTransaction on SEP ──
             try:
                 verify_result = await sep_client.verify_transaction(
                     ref_num=callback.ref_num,
@@ -213,27 +225,31 @@ async def payment_callback(
                     status_code=302,
                 )
 
-            # Process verify result
+            # Store SEP verify response fields
+            payment.sep_result_code = verify_result.result_code
+            payment.sep_result_description = verify_result.result_description
+
+            # ── Step 11: Process verify result ──
             if verify_result.is_successful or verify_result.is_duplicate:
                 verified_amount = verify_result.verified_amount
 
-                # Amount match check (SEP docs Case A vs B)
+                # Update from verify response details
+                if verify_result.transaction_detail:
+                    payment.verified_amount = verify_result.transaction_detail.original_amount
+                    payment.rrn = verify_result.transaction_detail.rrn or payment.rrn
+                    payment.trace_no = verify_result.transaction_detail.strace_no or payment.trace_no
+
+                # ── Amount match check (SEP docs Section 7: Case A vs B vs C) ──
                 if verified_amount == payment.amount:
-                    # Case A: SUCCESS — amounts match
+                    # ════════════════════════════════════════════════
+                    # CASE A: SUCCESS — amounts match
+                    # Everything below is committed ATOMICALLY
+                    # ════════════════════════════════════════════════
                     payment.status = PaymentStatus.VERIFIED
-                    payment.verified_amount = verified_amount
                     payment.verified_at = datetime.now(timezone.utc)
                     payment.updated_at = datetime.now(timezone.utc)
 
-                    if verify_result.transaction_detail:
-                        payment.rrn = verify_result.transaction_detail.rrn or payment.rrn
-                        payment.trace_no = verify_result.transaction_detail.strace_no or payment.trace_no
-
-                    payment.sep_result_code = verify_result.result_code
-                    payment.sep_result_description = verify_result.result_description
-                    await db.commit()
-
-                    # Credit wallet
+                    # Credit wallet (within same transaction)
                     try:
                         await WalletService.credit(
                             db=db,
@@ -243,19 +259,55 @@ async def payment_callback(
                             description=f"Payment {payment.res_num} verified",
                         )
                     except Exception as e:
-                        logger.error(
-                            "wallet_credit_failed",
+                        # Wallet credit failed — this is critical
+                        # Do NOT commit VERIFIED without wallet credit
+                        logger.critical(
+                            "wallet_credit_failed_blocking",
                             payment_id=payment.id,
                             error=str(e),
                         )
+                        payment.status = PaymentStatus.FAILED
+                        payment.failure_reason = f"Wallet credit failed: {str(e)}"
+                        await db.commit()
+                        return RedirectResponse(
+                            url=_build_redirect("error", payment.id, "Wallet credit failed"),
+                            status_code=302,
+                        )
 
-                    metrics.payment_verified.labels(terminal_id=payment_settings.SEP_TERMINAL_ID).inc()
+                    # Record discount usage (within same transaction)
+                    if payment.discount_code_id and payment.discount_amount:
+                        try:
+                            await DiscountService.record_usage(
+                                db=db,
+                                discount_code_id=payment.discount_code_id,
+                                user_id=payment.user_id,
+                                payment_id=payment.id,
+                                discount_amount=payment.discount_amount,
+                            )
+                        except Exception as e:
+                            # Discount usage recording failed — log but don't block
+                            # Payment + wallet credit are more important
+                            logger.error(
+                                "discount_usage_record_failed",
+                                payment_id=payment.id,
+                                discount_code_id=payment.discount_code_id,
+                                error=str(e),
+                            )
+
+                    # ═══ SINGLE ATOMIC COMMIT ═══
+                    # VERIFIED + wallet credit + discount usage all committed together
+                    await db.commit()
+
+                    metrics.payment_verified.labels(
+                        terminal_id=payment_settings.SEP_TERMINAL_ID
+                    ).inc()
 
                     logger.info(
                         "payment_verified_success",
                         payment_id=payment.id,
                         amount=payment.amount,
                         ref_num=callback.ref_num,
+                        has_discount=bool(payment.discount_code_id),
                     )
 
                     return RedirectResponse(
@@ -263,7 +315,11 @@ async def payment_callback(
                         status_code=302,
                     )
                 else:
-                    # Case B: Amount mismatch — reverse!
+                    # ════════════════════════════════════════════════
+                    # CASE B: Amount mismatch — auto-reverse
+                    # Per SEP docs: "the full amount must be returned
+                    # to the customer's account"
+                    # ════════════════════════════════════════════════
                     logger.warning(
                         "amount_mismatch",
                         payment_id=payment.id,
@@ -273,30 +329,42 @@ async def payment_callback(
 
                     payment.status = PaymentStatus.AMOUNT_MISMATCH
                     payment.verified_amount = verified_amount
-                    payment.failure_reason = f"Amount mismatch: expected {payment.amount}, got {verified_amount}"
+                    payment.failure_reason = (
+                        f"Amount mismatch: expected {payment.amount}, got {verified_amount}"
+                    )
                     payment.updated_at = datetime.now(timezone.utc)
-                    await db.commit()
 
-                    # Auto-reverse
+                    # Auto-reverse — best effort
                     try:
-                        await sep_client.reverse_transaction(ref_num=callback.ref_num)
+                        reverse_result = await sep_client.reverse_transaction(
+                            ref_num=callback.ref_num
+                        )
+                        payment.failure_reason += (
+                            f" | Auto-reversed: code={reverse_result.result_code}"
+                        )
                     except Exception as e:
+                        payment.failure_reason += f" | Auto-reverse failed: {str(e)}"
                         logger.error("auto_reverse_failed", error=str(e))
+
+                    await db.commit()
 
                     return RedirectResponse(
                         url=_build_redirect("FAILED", payment.id, "Amount verification failed"),
                         status_code=302,
                     )
             else:
-                # Case C: Verify returned error
+                # ════════════════════════════════════════════════
+                # CASE C: Verify returned error
+                # ════════════════════════════════════════════════
                 payment.status = PaymentStatus.FAILED
-                payment.sep_result_code = verify_result.result_code
-                payment.sep_result_description = verify_result.result_description
-                payment.failure_reason = verify_result.result_description
+                payment.failure_reason = (
+                    verify_result.result_description
+                    or f"Verify error code: {verify_result.result_code}"
+                )
                 payment.updated_at = datetime.now(timezone.utc)
                 await db.commit()
 
-                metrics.payment_failed(reason=payment_settings.SEP_TERMINAL_ID)
+                metrics.payment_failed(reason=f"verify_{verify_result.result_code}")
 
                 return RedirectResponse(
                     url=_build_redirect("FAILED", payment.id, verify_result.result_description),

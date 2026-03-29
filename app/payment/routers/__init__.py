@@ -14,12 +14,15 @@ from app.payment.routers.query import router as query_router
 from app.payment.routers.wallet import router as wallet_router
 from app.payment.routers.discount import router as discount_router
 from app.payment.routers.metrics import router as metrics_router
+from app.payment.routers.admin import router as admin_router
+
 # Main payment router — all sub-routers are included here
 payment_router = APIRouter()
 
 # Health (no auth required)
 payment_router.include_router(health_router)
 payment_router.include_router(metrics_router)
+
 # Payment operations
 payment_router.include_router(initiate_router)
 payment_router.include_router(callback_router)
@@ -31,5 +34,8 @@ payment_router.include_router(wallet_router, prefix="/wallet")
 
 # Discount
 payment_router.include_router(discount_router, prefix="/discount")
+
+# Admin (admin JWT required for all endpoints)
+payment_router.include_router(admin_router, prefix="/admin", tags=["Payment Admin"])
 
 __all__ = ["payment_router"]

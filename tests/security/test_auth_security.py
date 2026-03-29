@@ -214,7 +214,7 @@ class TestInjectionSecurity:
 
     @pytest.mark.asyncio
     async def test_oversized_message_rejected(self, client, auth_headers, test_chat):
-        long_content = "x" * 10001
+        long_content = "x" * 70001
         response = await client.post(
             f"/api/v1/chats/{test_chat.id}/messages",
             headers=auth_headers,

@@ -33,7 +33,7 @@ from app.payment.core.constants import (
     ReverseStatus,
     SEPResultCode,
 )
-from app.payment.core.locker import acquire_lock
+from app.payment.core.locker import acquire_lock, reverse_lock_key
 from app.payment.core.metrics import metrics
 from app.payment.models.payment import Payment
 from app.payment.models.reverse import Reverse
@@ -133,7 +133,7 @@ class ReverseService:
         )
 
         # Step 2: Acquire lock
-        lock_key = f"reverse:{payment.ref_num}"
+        lock_key = reverse_lock_key(payment.id)
 
         try:
             async with acquire_lock(redis_client, lock_key):

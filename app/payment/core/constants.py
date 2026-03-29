@@ -23,27 +23,22 @@ import enum
 class PaymentStatus(str, enum.Enum):
     """
     Payment lifecycle states.
-    
+
     Flow:
         PENDING → TOKEN_OBTAINED → CALLBACK_RECEIVED → VERIFIED
                                                      ↘ FAILED
                                                      ↘ AMOUNT_MISMATCH (auto-reverse)
                                                      ↘ VERIFY_TIMEOUT (SEP auto-reverses in 30 min)
         VERIFIED → REVERSED
-    
-    IMPORTANT — Do NOT confuse these two "code 2" values:
-      1. Callback Status=2 (from SEP redirect) → means "OK, user PAID"
-      2. Verify ResultCode=2 (from VerifyTransaction API) → means "duplicate request"
-      These are completely different code systems!
     """
-    PENDING = "PENDING"                       # Payment record created, no token yet
-    TOKEN_OBTAINED = "TOKEN_OBTAINED"         # Got token from SEP, waiting for user to pay
-    CALLBACK_RECEIVED = "CALLBACK_RECEIVED"   # SEP called back, processing verify...
-    VERIFIED = "VERIFIED"                     # Verify succeeded, wallet credited
-    FAILED = "FAILED"                         # Payment failed at any stage
-    AMOUNT_MISMATCH = "AMOUNT_MISMATCH"       # Verify OK but amount wrong, auto-reversed
-    VERIFY_TIMEOUT = "VERIFY_TIMEOUT"         # All verify retries timed out, SEP auto-reverses 30 min
-    REVERSED = "REVERSED"                     # Manually reversed after verification
+    PENDING = "PENDING"
+    TOKEN_OBTAINED = "TOKEN_OBTAINED"
+    CALLBACK_RECEIVED = "CALLBACK_RECEIVED"
+    VERIFIED = "VERIFIED"
+    FAILED = "FAILED"
+    AMOUNT_MISMATCH = "AMOUNT_MISMATCH"
+    VERIFY_TIMEOUT = "VERIFY_TIMEOUT"
+    REVERSED = "REVERSED"
 
 
 class ReverseStatus(str, enum.Enum):
@@ -55,12 +50,14 @@ class ReverseStatus(str, enum.Enum):
 
 class WalletTxType(str, enum.Enum):
     """Wallet transaction types."""
-    CREDIT = "CREDIT"   # Money added (payment verified → wallet charged)
-    DEBIT = "DEBIT"     # Money removed (reverse → wallet debited)
+    CREDIT = "CREDIT"
+    DEBIT = "DEBIT"
+
+
 class DiscountType(str, enum.Enum):
     """Discount code types."""
-    PERCENTAGE = "PERCENTAGE"  # e.g., 20% off (may have max_discount cap)
-    FIXED = "FIXED"            # e.g., 50,000 Rials flat discount
+    PERCENTAGE = "PERCENTAGE"
+    FIXED = "FIXED"
 
 
 # ═════════════════════════════════════════════════════════════
@@ -72,7 +69,7 @@ class DiscountType(str, enum.Enum):
 class SEPState(str, enum.Enum):
     """
     SEP callback State values (English strings).
-    
+
     Only SEPState.OK indicates a successful payment.
     All other states mean the payment did not complete.
     """
@@ -143,7 +140,7 @@ SEP_CALLBACK_STATUS_CODES: dict[int, dict[str, str]] = {
     },
 }
 
-# The ONLY status code that means payment success
+# The ONLY callback status code that means payment success
 SEP_SUCCESS_STATUS: int = 2
 
 
@@ -167,7 +164,7 @@ SEP_TOKEN_FAILURE: int = -1   # status=-1 → errorCode and errorDesc fields pre
 class SEPResultCode:
     """
     Result codes from SEP VerifyTransaction and ReverseTransaction APIs.
-    
+
     Usage:
         if result_code == SEPResultCode.SUCCESS:
             # Transaction verified
@@ -235,9 +232,6 @@ SEP_REVERSE_RESULT_CODES: dict[int, dict[str, str]] = {
     if "reverse" in info["api"]
 }
 
-# Convenience alias — some modules import as SEP_RESULT_CODES
-SEP_RESULT_CODES = SEP_VERIFY_RESULT_CODES
-
 
 # ═════════════════════════════════════════════════════════════
 # SEP API PARAMETER NAMES (Case-Sensitive!)
@@ -247,15 +241,15 @@ SEP_RESULT_CODES = SEP_VERIFY_RESULT_CODES
 class SEPParams:
     """
     Exact parameter names used by SEP APIs.
-    
+
     WARNING: SEP is case-sensitive. Use these constants exactly.
-    
+
     Note the inconsistency between APIs:
     - Token API: TerminalId (string)
     - Verify/Reverse API: TerminalNumber (int)
     This is documented in SEP's own docs and is NOT a bug.
     """
-    # Token Request
+    # ── Token Request ──
     ACTION = "action"
     ACTION_VALUE_TOKEN = "token"
     TERMINAL_ID = "TerminalId"
@@ -265,14 +259,14 @@ class SEPParams:
     CELL_NUMBER = "CellNumber"
     TOKEN_EXPIRY = "TokenExpiryInMin"
     WAGE = "Wage"
-    
-    # Token Response
+
+    # ── Token Response ──
     STATUS = "status"
     TOKEN = "token"
     ERROR_CODE = "errorCode"
     ERROR_DESC = "errorDesc"
-    
-    # Callback POST params (from SEP to our callback URL)
+
+    # ── Callback POST params (from SEP to our callback URL) ──
     CB_MID = "MID"
     CB_STATE = "State"
     CB_STATUS = "Status"
@@ -286,18 +280,20 @@ class SEPParams:
     CB_SECURE_PAN = "SecurePan"
     CB_HASHED_CARD = "HashedCardNumber"
     CB_AFFECTIVE_AMOUNT = "AffectiveAmount"
-    
-    # Verify/Reverse Request — NOTE: TerminalNumber (int), NOT TerminalId (string)
+    CB_TOKEN = "Token"
+
+    # ── Verify/Reverse Request ──
+    # NOTE: TerminalNumber (int), NOT TerminalId (string)
     VR_REF_NUM = "RefNum"
     VR_TERMINAL_NUMBER = "TerminalNumber"
-    
-    # Verify Response
+
+    # ── Verify/Reverse Response ──
     VR_TRANSACTION_DETAIL = "TransactionDetail"
     VR_RESULT_CODE = "ResultCode"
     VR_RESULT_DESCRIPTION = "ResultDescription"
     VR_SUCCESS = "Success"
-    
-    # VerifyInfo (inside TransactionDetail)
+
+    # ── VerifyInfo (inside TransactionDetail) ──
     VI_RRN = "RRN"
     VI_REF_NUM = "RefNum"
     VI_MASKED_PAN = "MaskedPan"
@@ -315,58 +311,55 @@ class SEPParams:
 
 class LockPrefix:
     """Redis distributed lock key prefixes."""
-    PAYMENT_CALLBACK = "lock:payment:callback:"
-    PAYMENT_REFNUM = "lock:payment:ref:"
-    REVERSE = "lock:reverse:"
-    WALLET = "lock:wallet:"
-    DISCOUNT = "lock:discount:"
-
-
-# Legacy constants (kept for backward compatibility)
-LOCK_PREFIX_VERIFY = "payment:lock:verify"
-LOCK_PREFIX_REVERSE = "payment:lock:reverse"
-LOCK_PREFIX_CALLBACK = "payment:lock:callback"
+    PAYMENT_CALLBACK = "payment:callback:"
+    PAYMENT_REFNUM = "payment:ref:"
+    REVERSE = "reverse:"
+    WALLET = "wallet:"
+    DISCOUNT = "discount:"
 
 
 # ═════════════════════════════════════════════════════════════
-# PROMETHEUS METRIC NAMES
+# PROMETHEUS METRIC NAMES (centralized — used by core/metrics.py)
 # ═════════════════════════════════════════════════════════════
 
-METRIC_PAYMENT_INITIATED = "sep_payment_initiated_total"
-METRIC_PAYMENT_VERIFIED = "sep_payment_verified_total"
-METRIC_PAYMENT_FAILED = "sep_payment_failed_total"
-METRIC_PAYMENT_REVERSED = "sep_payment_reversed_total"
-METRIC_DISCOUNT_USED = "sep_discount_used_total"
-METRIC_DOUBLE_SPEND_BLOCKED = "sep_double_spend_blocked_total"
-METRIC_PAYMENT_DURATION = "sep_payment_duration_seconds"
-METRIC_SEP_API_DURATION = "sep_api_call_duration_seconds"
-METRIC_PAYMENT_AMOUNT = "sep_payment_amount_rials"
-METRIC_WALLET_BALANCE = "sep_wallet_balance_rials"
-METRIC_ACTIVE_LOCKS = "sep_active_payment_locks"
+METRIC_PAYMENT_INITIATED = "payment_initiated_total"
+METRIC_PAYMENT_VERIFIED = "payment_verified_total"
+METRIC_PAYMENT_FAILED = "payment_failed_total"
+METRIC_PAYMENT_REVERSED = "payment_reversed_total"
+METRIC_DISCOUNT_USED = "discount_used_total"
+METRIC_DOUBLE_SPEND_BLOCKED = "payment_double_spend_blocked_total"
+METRIC_PAYMENT_DURATION = "payment_duration_seconds"
+METRIC_SEP_API_DURATION = "sep_api_duration_seconds"
+METRIC_PAYMENT_AMOUNT = "payment_amount_rials"
+METRIC_ACTIVE_PAYMENTS = "payment_active_processing"
+METRIC_TOKEN_OBTAINED = "payment_token_obtained_total"
+METRIC_TOKEN_FAILED = "payment_token_failed_total"
+METRIC_VERIFY_FAILED = "payment_verify_failed_total"
+METRIC_REVERSE_COMPLETED = "payment_reverse_completed_total"
+METRIC_REVERSE_FAILED = "payment_reverse_failed_total"
+METRIC_WALLET_CREDITED = "wallet_credited_total"
+METRIC_WALLET_DEBITED = "wallet_debited_total"
+METRIC_SEP_API_CALLS = "sep_api_calls_total"
 
 
 # ═════════════════════════════════════════════════════════════
 # BUSINESS RULES
 # ═════════════════════════════════════════════════════════════
 
-# Payment amount limits (in Rials)
-MIN_PAYMENT_AMOUNT: int = 10_000             # 1,000 Tomans minimum
-MAX_PAYMENT_AMOUNT: int = 500_000_000_000    # 50B Tomans (reasonable upper limit)
+# ResNum generation prefix (helps identify our transactions in SEP reports)
+RES_NUM_PREFIX: str = "PAY"
 
 # Currency
 CURRENCY: str = "IRR"  # ISO 4217: Iranian Rial
 
-# ResNum generation prefix (helps identify our transactions in SEP reports)
-RES_NUM_PREFIX: str = "PAY"
+# Payment amount limits (in Rials) — defaults, overridable via config.py / env vars
+MIN_PAYMENT_AMOUNT: int = 10_000             # 1,000 Tomans minimum
+MAX_PAYMENT_AMOUNT: int = 500_000_000        # 50,000,000 Tomans maximum
 
-# SEP verify window (per docs: 30 minutes for auto-reverse if not verified)
-SEP_VERIFY_WINDOW_MINUTES: int = 30
+# SEP time windows (enforced by SEP, not configurable by merchant)
+SEP_VERIFY_WINDOW_MINUTES: int = 30    # Must verify within 30 min or SEP auto-reverses
+SEP_REVERSE_WINDOW_MINUTES: int = 50   # Can reverse within 50 min of transaction
 
-# SEP reverse window (per docs: 50 minutes after transaction)
-SEP_REVERSE_WINDOW_MINUTES: int = 50
-
-# Maximum RefNum length (per docs: up to 50 characters)
-MAX_REF_NUM_LENGTH: int = 50
-
-# Maximum RedirectURL length (per docs: 2083 characters, 1538 with GetMethod)
-MAX_REDIRECT_URL_LENGTH: int = 2083
+# SEP field length limits (from PSP documentation)
+MAX_REF_NUM_LENGTH: int = 50           # RefNum max length per SEP docs
+MAX_REDIRECT_URL_LENGTH: int = 2083    # RedirectURL max (1538 with GetMethod)

@@ -344,32 +344,6 @@ class SEPReverseException(SEPGatewayException):
         super().__init__(message)
 
 
-class AmountMismatchException(SEPGatewayException):
-    """
-    Verified amount doesn't match the requested payment amount.
-    
-    Per SEP docs (Section 7 — Case B):
-    "If the two amounts are not equal, the full amount must be returned
-    to the customer's account and the merchant must NOT deliver the service."
-    
-    When this occurs, the service automatically initiates a reverse.
-    """
-    error_code = "AMOUNT_MISMATCH"
-
-    def __init__(
-        self,
-        expected_amount: int,
-        verified_amount: int,
-    ):
-        self.expected_amount = expected_amount
-        self.verified_amount = verified_amount
-        message = (
-            f"Amount mismatch: expected {expected_amount:,} Rials, "
-            f"SEP verified {verified_amount:,} Rials. "
-            f"Auto-reverse initiated per SEP documentation."
-        )
-        super().__init__(message)
-
 
 class SEPTimeoutException(SEPGatewayException):
     """
@@ -391,28 +365,6 @@ class SEPTimeoutException(SEPGatewayException):
         self.attempts = attempts
         message = f"{api_name} timed out after {attempts} attempt(s)"
         super().__init__(message)
-
-
-# ─────────────────────────────────────────────────────────────
-# Payment Processing Warnings (non-fatal, logged only)
-# These extend Exception directly, NOT AppException.
-# They are caught and logged but never sent to the client.
-# ─────────────────────────────────────────────────────────────
-
-class PaymentWarning(Exception):
-    """Base for non-fatal payment issues (logged, not raised to client)."""
-    pass
-
-
-class SEPCallbackWarning(PaymentWarning):
-    """Non-critical issue during callback processing (e.g., unexpected extra params)."""
-    pass
-
-
-class MetricsWarning(PaymentWarning):
-    """Failed to record metrics but payment processing continues normally."""
-    pass
-
 
 class SEPConnectionException(SEPGatewayException):
     """
