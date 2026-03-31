@@ -195,6 +195,7 @@ class WalletService:
         await db.execute(
             update(Wallet)
             .where(Wallet.id == wallet.id)
+            .where(Wallet.balance >= amount)
             .values(
                 balance=Wallet.balance - amount,
                 updated_at=datetime.now(timezone.utc),

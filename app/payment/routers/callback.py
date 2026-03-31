@@ -40,7 +40,7 @@ from app.payment.services.discount_service import DiscountService
 from app.payment.services.double_spend_guard import DoubleSpendGuard
 from app.payment.config import payment_settings
 from app.payment.core.metrics import metrics
-
+from app.payment.exceptions import LockAcquisitionException
 logger = structlog.get_logger()
 
 router = APIRouter()
@@ -203,6 +203,12 @@ async def payment_callback(
             redis_client,
             callback_lock_key(callback.ref_num),
         ):
+            await db.refresh(payment)  # Re-read from DB
+            if payment.status == PaymentStatus.VERIFIED:
+                return RedirectResponse(
+                    url=_build_redirect("VERIFIED", payment.id, amount=payment.amount),
+                    status_code=302,
+                    )
             # ── Step 10: Call VerifyTransaction on SEP ──
             try:
                 verify_result = await sep_client.verify_transaction(
@@ -248,7 +254,12 @@ async def payment_callback(
                     payment.status = PaymentStatus.VERIFIED
                     payment.verified_at = datetime.now(timezone.utc)
                     payment.updated_at = datetime.now(timezone.utc)
-
+                    await db.refresh(payment)  # Re-read from DB
+                    if payment.status == PaymentStatus.VERIFIED:
+                        return RedirectResponse(
+                            url=_build_redirect("VERIFIED", payment.id, amount=payment.amount),
+                            status_code=302,
+                            )
                     # Credit wallet (within same transaction)
                     try:
                         await WalletService.credit(
@@ -370,7 +381,12 @@ async def payment_callback(
                     url=_build_redirect("FAILED", payment.id, verify_result.result_description),
                     status_code=302,
                 )
-
+    except LockAcquisitionException:
+        logger.warning("callback_lock_busy", payment_id=payment.id)
+        return RedirectResponse(
+            url=_build_redirect("error", payment.id, "Payment is being processed, please wait"),
+            status_code=302,
+        )
     except Exception as e:
         logger.error(
             "callback_processing_error",

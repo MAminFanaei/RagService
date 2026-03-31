@@ -106,7 +106,14 @@ services:
       - "6379:6379" #🔴 hardcoded !
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --save 60 1000
+      --save 300 10
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
     network_mode: "host"
     restart: unless-stopped
     # networks:

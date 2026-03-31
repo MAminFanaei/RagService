@@ -158,9 +158,14 @@ async def close_db():
     await async_engine.dispose()
     logger.info("Async database connections closed")
 
-
 async def cleanup_all():
     """Cleanup all connections (call on shutdown)."""
+    try:
+        from app.payment.services.sep_client import sep_client
+        await sep_client.close()
+    except Exception:
+        pass
+
     await close_redis()
     await close_db()
 

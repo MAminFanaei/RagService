@@ -5,6 +5,7 @@ FastAPI Application - Async Version
 Uses async database sessions for startup operations.
 """
 
+import asyncio
 import multiprocessing
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +54,7 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
+    app.state.shutting_down = False
     logger.info("✓ Starting RAG Service", version=settings.APP_VERSION)
     
     # Initialize database tables (sync - before event loop fully running)
@@ -85,7 +87,9 @@ async def lifespan(app: FastAPI):
             logger.error("Failed to create admin user", error=str(e))
     
     yield
-    
+    app.state.shutting_down = True
+    logger.info("Shutting down RAG Service — draining in-flight requests...")
+    await asyncio.sleep(2)
     # Shutdown
     logger.info("Shutting down RAG Service")
     await cleanup_all()
