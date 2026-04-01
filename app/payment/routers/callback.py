@@ -195,7 +195,8 @@ async def payment_callback(
     # ── Step 8: NOW assign ref_num (double-spend check passed) ──
     payment.ref_num = callback.ref_num
     payment.status = PaymentStatus.CALLBACK_RECEIVED
-    # NO commit here — we only commit when reaching a terminal state
+    payment.updated_at = datetime.now(timezone.utc)
+    await db.commit()  # ← ADD THIS: Commit ref_num so other callbacks see it
 
     # ── Step 9: Acquire lock on RefNum to prevent concurrent processing ──
     try:
@@ -254,12 +255,6 @@ async def payment_callback(
                     payment.status = PaymentStatus.VERIFIED
                     payment.verified_at = datetime.now(timezone.utc)
                     payment.updated_at = datetime.now(timezone.utc)
-                    await db.refresh(payment)  # Re-read from DB
-                    if payment.status == PaymentStatus.VERIFIED:
-                        return RedirectResponse(
-                            url=_build_redirect("VERIFIED", payment.id, amount=payment.amount),
-                            status_code=302,
-                            )
                     # Credit wallet (within same transaction)
                     try:
                         await WalletService.credit(

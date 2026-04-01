@@ -6,3 +6,4 @@ venv/
 .DS_Store
 docs/others/
 models/*
+what_to_do.md

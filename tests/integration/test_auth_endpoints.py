@@ -195,7 +195,6 @@ class TestCurrentUser:
         data = response.json()
         assert data["email"] == test_user.email
         assert data["username"] == test_user.username
-        assert "remaining_messages_today" in data
 
     @pytest.mark.asyncio
     async def test_get_me_no_token(self, client):

@@ -336,4 +336,4 @@
         
 #         assert response.status_code == 200
 #         data = response.json()
-#         assert "remaining_messages_today" in data
+

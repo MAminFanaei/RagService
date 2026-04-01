@@ -20,7 +20,7 @@ from app.payment.routers import payment_router
 from app.core.rag_engine import create_rag_engine
 from app.config import settings
 from app.core.database import init_db_sync, AsyncSessionLocal, cleanup_all
-from app.api.v1 import auth, chats, admin
+from app.api.v1 import auth, chats, admin , credits
 from app.middleware.error_handler import setup_exception_handlers
 from app.services.user_service import UserService
 from app.models.user import User, AuthProvider
@@ -126,6 +126,7 @@ setup_exception_handlers(app)
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(chats.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(credits.router, prefix="/api/v1")
 app.include_router(
     payment_router,
     prefix="/api/v1/payment",

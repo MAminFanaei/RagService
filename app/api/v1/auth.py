@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+from app.services.credit_service import CreditService
 from app.core.database import get_db, get_redis
 from app.core.security import create_token_pair, decode_token, oauth, blacklist_token
 from app.schemas.auth import Token, RefreshTokenRequest, OAuthCallbackResponse
@@ -163,14 +164,23 @@ async def github_callback(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user), redis: aioredis.Redis = Depends(get_redis_client)):
-    rate_per_minute, quota_per_day = RateLimitService.get_user_limits(current_user)
-    _, remaining = await RateLimitService.check_daily_quota(redis, current_user.id, quota_per_day)
+async def get_current_user_info(current_user: User = Depends(get_current_user), redis: aioredis.Redis = Depends(get_redis_client),db: AsyncSession = Depends(get_db),):
+    credit_info = await CreditService.get_info(db, current_user.id)
+
     return UserResponse(
-        email=current_user.email, username=current_user.username, is_active=current_user.is_active,
-        is_admin=current_user.is_admin, created_at=current_user.created_at, remaining_messages_today=remaining
+        email=current_user.email,
+        username=current_user.username,
+        is_admin=current_user.is_admin if current_user.is_admin else None ,
+        created_at=current_user.created_at,
+        remaining_messages=credit_info["remaining_messages"],
+        total_purchased=credit_info["total_purchased"],
+        total_used=credit_info["total_used"],
     )
 
+@router.patch("/me", response_model=ProfileUpdateResponse)
+async def update_profile(request: ProfileUpdateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    user = await UserService.update_profile(db=db, user_id=current_user.id, username=request.username, full_name=request.full_name, avatar_url=request.avatar_url)
+    return {"message": "Profile updated successfully", "user": user}
 
 @router.put("/me/password", response_model=PasswordChangeResponse)
 async def change_password(request: PasswordChangeRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -183,8 +193,3 @@ async def change_email(request: EmailChangeRequest, current_user: User = Depends
     user = await UserService.change_email(db=db, user_id=current_user.id, new_email=request.new_email, password=request.password)
     return {"message": "Email changed successfully.", "new_email": user.email, "is_verified": user.is_verified}
 
-
-@router.patch("/me", response_model=ProfileUpdateResponse)
-async def update_profile(request: ProfileUpdateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    user = await UserService.update_profile(db=db, user_id=current_user.id, username=request.username, full_name=request.full_name, avatar_url=request.avatar_url)
-    return {"message": "Profile updated successfully", "user": user}

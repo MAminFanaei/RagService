@@ -380,7 +380,8 @@ class RAGEngine:
                 "enhanced_query": result.get("enhanced_query"),
                 "keywords": result.get("keywords", []),
                 "answer": final_answer,
-                "usage": total_usage,                
+                "usage": total_usage,
+                "is_rejected": result.get("enhancement_status") == "REJECTED",                
                 "retrieved_docs": retrieved_docs,
                 "had_conversation_context": bool(conversation_history)
             }

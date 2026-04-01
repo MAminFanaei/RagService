@@ -104,6 +104,7 @@ class RAGService:
         )
         
         assistant_metadata = {
+            "is_rejected": rag_result.get("is_rejected", False), 
             "resolved_query": rag_result.get("resolved_query"),
             "enhanced_query": rag_result.get("enhanced_query"),
             "keywords" : rag_result.get("keywords", []),
@@ -141,7 +142,8 @@ class RAGService:
             "assistant_message": assistant_message,
             "processing_time_ms": processing_time,
             "rag_metadata": assistant_metadata,
-            "context_info": context_info
+            "context_info": context_info,
+            "is_rejected": rag_result.get("is_rejected", False),
         }
     
     @staticmethod

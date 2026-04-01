@@ -19,7 +19,9 @@ class BadRequestException(AppException):
     status_code = status.HTTP_400_BAD_REQUEST
     error_code = "BAD_REQUEST"
     
-    def __init__(self, message: str = "Invalid request"):
+    def __init__(self, message: str = "An unexpected error occurred", data: dict = None):
+        self.message = message
+        self.data = data
         super().__init__(message)
 
 
@@ -91,22 +93,6 @@ class NotImplementedException(AppException):
 # Service-Specific Exceptions (non-fatal, logged only)
 # ─────────────────────────────────────────────────────────────
 
-class ServiceWarning(Exception):
-    """Base for non-fatal service issues (logged, not raised to client)."""
-    pass
-
-
-class RedisWarning(ServiceWarning):
-    """Redis operation failed but app continues."""
-    pass
-
-
-class ElasticsearchWarning(ServiceWarning):
-    """Elasticsearch operation failed but app continues."""
-    pass
-
-# Add this exception:
-
 class InputTooLongException(BadRequestException):
     """User input exceeds maximum length."""
     error_code = "INPUT_TOO_LONG"
@@ -122,3 +108,20 @@ class InputTooLongException(BadRequestException):
         if max_length and actual_length:
             message = f"Input too long: {actual_length} characters (max: {max_length})"
         super().__init__(message)
+
+class PaymentRequiredException(AppException):
+    """402 - Payment required (insufficient credits or wallet)."""
+    status_code = 402
+    error_code = "PAYMENT_REQUIRED"
+
+    def __init__(self, message: str = "Payment required", data: dict = None):
+        super().__init__(message, data)
+
+
+class InsufficientCreditsException(AppException):
+    """402 - No remaining message credits."""
+    status_code = 402
+    error_code = "INSUFFICIENT_CREDITS"
+
+    def __init__(self, message: str = "No remaining messages", data: dict = None):
+        super().__init__(message, data)

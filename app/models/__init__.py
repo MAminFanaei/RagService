@@ -1,6 +1,7 @@
 from app.models.user import User, AuthProvider
 from app.models.chat import ChatSession
 from app.models.message import Message, MessageRole
+from app.models.credit import MessageCredit
 
 __all__ = [
     "User",

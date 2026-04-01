@@ -26,6 +26,9 @@ from app.services.rate_limit_service import RateLimitService
 from app.api.deps import get_current_user, get_redis_client
 from app.models.user import User
 from app.config import settings
+from app.services.credit_service import CreditService
+from app.payment.services.wallet_service import WalletService
+from app.middleware.exceptions import InsufficientCreditsException
 
 router = APIRouter(prefix="/chats", tags=["Chats"])
 logger = structlog.get_logger()
@@ -182,7 +185,6 @@ async def restore_chat(
         "last_message_at": messages[0].created_at if messages else None
     }
 
-
 @router.post("/{chat_id}/messages", response_model=RAGQueryResponse)
 async def send_message(
     chat_id: str,
@@ -195,44 +197,57 @@ async def send_message(
     """Send a message and get RAG response."""
     content_length = len(message.content) // 4
     max_length = settings.USER_QUERY_LENGTH_LIMIT
-    
 
     if content_length > max_length:
         raise InputTooLongException(
             max_length=max_length,
             actual_length=content_length
         )
-    
+
     if current_user.is_admin:
-        quota_allowed, quota_remaining, allowed = True, 9999, True
+        quota_allowed, _, allowed = True, 9999, True
     else:
         rate_per_min, quota_per_day = RateLimitService.get_user_limits(current_user)
-        
-        quota_allowed, quota_remaining = await RateLimitService.check_daily_quota(
+
+        quota_allowed, _ = await RateLimitService.check_daily_quota(
             redis=redis,
             user_id=current_user.id,
             max_per_day=quota_per_day
         )
-        
+
         allowed = await RateLimitService.check_per_min_rate_limit(
             redis=redis,
             user_id=current_user.id,
             limit_per_minute=rate_per_min,
             key_prefix="rag_query"
         )
-        
+
         if not quota_allowed:
             raise RateLimitException("Daily message quota exceeded. Will reset at midnight.")
-        
+
         if not allowed:
             raise RateLimitException("Too many requests. Please try again later.")
-    
-    # Validate chat exists and belongs to user BEFORE calling RAG engine
+
+        # Credit check 
+        credits = await CreditService.get_or_create(db, current_user.id)
+        if credits.remaining <= 0:
+            wallet = await WalletService.get_or_create_wallet(db, current_user.id)
+            raise InsufficientCreditsException(
+                message="No remaining messages. Purchase more to continue.",
+                data={
+                    "remaining_messages": 0,
+                    "wallet_balance": wallet.balance,
+                    "price_per_message": settings.PRICE_PER_MESSAGE,
+                    "affordable_messages": wallet.balance // settings.PRICE_PER_MESSAGE,
+                    "action": "purchase_credits",
+                },
+            )
+
+    # Validate chat exists and belongs to user
     chat = await ChatService.get_chat(db, chat_id, current_user.id)
     if not chat:
         raise NotFoundException("Chat not found")
-    
-    
+
     try:
         start_time = time.time()
         result = await RAGService.process_query(
@@ -243,31 +258,45 @@ async def send_message(
             rag_engine=request.app.state.rag_engine
         )
         processing_time = (time.time() - start_time) * 1000
-        
+
     except AppException:
         raise
     except Exception as e:
         logger.error("RAG query failed", error=str(e))
         raise InternalException("Failed to process message")
-    
+
+    # ── Rate limit increment (always, same as before) ──
     await RateLimitService.increment_rate_limit(
         redis=redis,
         user_id=current_user.id,
         key_prefix="rag_query"
     )
-    
+
     await RateLimitService.increment_daily_quota(
         redis=redis,
         user_id=current_user.id
     )
-    
+
+    # ── Credit deduction (after success, admin bypasses) ──
+    credits_remaining = None
+    if not current_user.is_admin:
+        is_rejected = result.get("is_rejected", False)
+
+        if is_rejected:
+            rejection_info = await CreditService.record_rejection(db, current_user.id)
+            credits_remaining = rejection_info["credits_remaining"]
+        else:
+            credits_remaining = await CreditService.consume_one(db, current_user.id)
+
+        await db.commit()
+
     return {
         "message_id": result["assistant_message"].id,
         "chat_id": chat_id,
         "user_message": result["user_message"].to_response_dict(include_metadata=current_user.is_admin),
         "assistant_message": result["assistant_message"].to_response_dict(include_metadata=current_user.is_admin),
         "processing_time_ms": processing_time,
-        "quota_remaining": quota_remaining - 1
+        "credits_remaining": credits_remaining,
     }
 
 

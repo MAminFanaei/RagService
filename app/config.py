@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     TOTAL_QUERY_TIMEOUT_SECONDS: int = 120
     MAX_CONCURRENT_QUERIES: int = 10
     
+    # Message Credit settings
+    FREE_MESSAGES_FOR_NEW_USERS: int 
+    PRICE_PER_MESSAGE: int 
+    MAX_FREE_REJECTIONS: int
+    MIN_MESSAGE_PURCHASE: int 
+    MAX_MESSAGE_PURCHASE: int 
+
     # DATABASE POOL SETTINGS
     DB_POOL_SIZE: int 
     DB_MAX_OVERFLOW: int 

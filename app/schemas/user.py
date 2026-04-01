@@ -63,26 +63,20 @@ class UserResponse(UserBase):
     email: Optional[EmailStr] = None      # was EmailStr (required)
     username: Optional[str] = None 
     is_active: Optional[bool] = None
-    is_admin: bool  # Required - no default
+    is_admin: Optional[bool] = None # Required - no default
     is_verified: Optional[bool] = None
     avatar_url: Optional[str] = None
     created_at: datetime  # Required - no default
     last_login_at: Optional[datetime] = None
     
-    # Rate limiting info
-    max_messages_per_day: Optional[int] = None
-    rate_limit_per_minute: Optional[int] = None
-    remaining_messages_today: Optional[int] = None
-    
+    # User Credit Info
+    remaining_messages: Optional[int] = None
+    total_purchased: Optional[int] = None
+    total_used: Optional[int] = None
+
     class Config:
         from_attributes = True
 
-
-class UserWithStats(UserResponse):
-    """Extended user info with usage statistics"""
-    total_chats: int = 0
-    total_messages: int = 0
-    messages_today: int = 0
 
 # ─────────────────────────────────────────────────────────────
 # Profile Update Schemas

@@ -2,7 +2,8 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 import structlog
-from app.middleware.exceptions import AppException, RateLimitException, ServiceWarning
+from app.middleware.exceptions import AppException, RateLimitException
+from app.payment.exceptions import AppException as PaymentAppException
 from app.config import settings
 logger = structlog.get_logger()
 
@@ -53,16 +54,48 @@ def setup_exception_handlers(app: FastAPI):
         
         # Collect headers from exception
         headers = getattr(exc, 'headers', None) or {}
+        content = {
+                "error": exc.error_code,
+                "message": exc.message
+            }
         
+        if hasattr(exc, "data") and exc.data is not None:
+            content["data"] = exc.data
         # Add Retry-After for rate limits
         if isinstance(exc, RateLimitException):
             headers["Retry-After"] = str(exc.retry_after)
-        
+
         return JSONResponse(
             status_code=exc.status_code,
-            content={
+            content=content,
+            headers=headers or None
+        )
+    
+    # this make the payment independent for later seperation
+    @app.exception_handler(PaymentAppException)
+    async def payment_app_exception_handler(request: Request, exc: PaymentAppException):
+        logger.warning(
+            "App exception",
+            error_code=exc.error_code,
+            message=exc.message,
+            path=request.url.path
+        )
+        
+        # Collect headers from exception
+        headers = getattr(exc, 'headers', None) or {}
+        content = {
                 "error": exc.error_code,
                 "message": exc.message
-            },
+            }
+        
+        if hasattr(exc, "data") and exc.data is not None:
+            content["data"] = exc.data
+        # Add Retry-After for rate limits
+        if isinstance(exc, RateLimitException):
+            headers["Retry-After"] = str(exc.retry_after)
+
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=content,
             headers=headers or None
         )
