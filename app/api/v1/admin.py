@@ -13,8 +13,9 @@ from app.core.security import get_password_hash_async, verify_password
 from app.middleware.exceptions import BadRequestException, NotFoundException
 from app.schemas.admin import (
     AdminUserUpdate, UserActionResponse, UserDeleteRequest, UserDeleteResponse,
-    UserDisableRequest, UserStatsResponse, ConversationExport , AdminPasswordResetResponse , AdminPasswordResetRequest
+    UserDisableRequest, UserStatsResponse, ConversationExport , AdminPasswordResetResponse , AdminPasswordResetRequest ,     AdminCreditAdjustRequest, AdminCreditAdjustResponse,AdminWalletTopUpRequest, AdminWalletTopUpResponse,
 )
+from app.services.credit_service import CreditService   
 from app.core.database import check_db_health, check_redis_health
 from app.services.user_service import UserService
 from app.services.chat_service import ChatService
@@ -236,4 +237,98 @@ async def admin_reset_user_password(
         message="Password reset successfully",
         username=target_user.username or target_user.id,
         email=target_user.email or ""
+    )
+
+@router.post(
+    "/users/{user_id}/credits",
+    response_model=AdminCreditAdjustResponse,
+)
+async def admin_add_user_credits(
+    user_id: str,
+    request: AdminCreditAdjustRequest,
+    current_admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    [ADMIN ONLY] Add message credits to a user account.
+    Does NOT charge the wallet — this is a free grant.
+    """
+    target_user = await UserService.get_by_id(db, user_id)
+    if not target_user:
+        raise NotFoundException("User not found")
+    
+    if not verify_password(request.admin_password, current_admin.hashed_password):
+        raise BadRequestException("Admin password is incorrect")
+
+    result = await CreditService.admin_add_credits(
+        db=db,
+        user_id=user_id,
+        amount=request.amount,
+        reason=request.reason,
+        admin_id=current_admin.id,
+    )
+    await db.commit()
+
+    logger.info(
+        "admin_added_credits",
+        admin_id=current_admin.id,
+        admin_email=current_admin.email or "no email",
+        target_user_id=user_id,
+        amount=request.amount,
+        reason=request.reason,
+    )
+
+    return AdminCreditAdjustResponse(
+        message=f"Successfully added {request.amount} credits to user account.",
+        user_id=user_id,
+        credits_added=result["credits_added"],
+        new_remaining=result["new_remaining"],
+        total_purchased=result["total_purchased"],
+    )
+
+
+@router.post(
+    "/users/{user_id}/wallet/topup",
+    response_model=AdminWalletTopUpResponse,
+)
+async def admin_topup_user_wallet(
+    user_id: str,
+    request: AdminWalletTopUpRequest,
+    current_admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    [ADMIN ONLY] Add money (Rials) to a user wallet.
+    Creates the wallet automatically if the user has none.
+    """
+    target_user = await UserService.get_by_id(db, user_id)
+    if not target_user:
+        raise NotFoundException("User not found")
+    
+    if not verify_password(request.admin_password, current_admin.hashed_password):
+        raise BadRequestException("Admin password is incorrect")
+    result = await CreditService.admin_add_wallet_balance(
+        db=db,
+        user_id=user_id,
+        amount=request.amount,
+        reason=request.reason,
+        admin_id=current_admin.id,
+    )
+    await db.commit()
+
+    logger.info(
+        "admin_topped_up_wallet",
+        admin_id=current_admin.id,
+        admin_email=current_admin.email or "no email",
+        target_user_id=user_id,
+        amount=request.amount,
+        reason=request.reason,
+    )
+
+    return AdminWalletTopUpResponse(
+        message=f"Successfully added {request.amount:,} Rials to user wallet.",
+        user_id=user_id,
+        amount_added=result["amount_added"],
+        new_balance=result["new_balance"],
+        wallet_id=result["wallet_id"],
     )

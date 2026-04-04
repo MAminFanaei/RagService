@@ -197,3 +197,85 @@ class CreditService:
             select(MessageCredit).where(MessageCredit.user_id == user_id)
         )
         return result.scalar_one_or_none()
+    
+    @staticmethod
+    async def admin_add_credits(
+        db: AsyncSession,
+        user_id: str,
+        amount: int,
+        reason: str,
+        admin_id: str,
+    ) -> dict:
+        """
+        Admin manually adds message credits to a user account.
+        Does NOT debit wallet — this is a free grant.
+        Caller must commit().
+        """
+        credit = await CreditService.get_or_create(db, user_id)
+
+        await db.execute(
+            update(MessageCredit)
+            .where(MessageCredit.user_id == user_id)
+            .values(
+                remaining=MessageCredit.remaining + amount,
+                total_purchased=MessageCredit.total_purchased + amount,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.flush()
+
+        # Re-read after UPDATE — same pattern as purchase()
+        refreshed = await CreditService._get(db, user_id)
+
+        logger.info(
+            "admin_credits_added",
+            admin_id=admin_id,
+            user_id=user_id,
+            amount=amount,
+            reason=reason,
+            new_remaining=refreshed.remaining,
+        )
+
+        return {
+            "credits_added": amount,
+            "new_remaining": refreshed.remaining,
+            "total_purchased": refreshed.total_purchased,
+        }
+
+
+    @staticmethod
+    async def admin_add_wallet_balance(
+        db: AsyncSession,
+        user_id: str,
+        amount: int,
+        reason: str,
+        admin_id: str,
+    ) -> dict:
+        """
+        Admin manually adds money to a user wallet via WalletService.credit().
+        Creates wallet if user has none (lazy init — same as everywhere else).
+        Caller must commit().
+        """
+        tx = await WalletService.credit(
+            db=db,
+            user_id=user_id,
+            amount=amount,
+            description=f"[ADMIN GRANT] {reason} (by admin {admin_id})",
+        )
+
+        logger.info(
+            "admin_wallet_topped_up",
+            admin_id=admin_id,
+            user_id=user_id,
+            amount=amount,
+            reason=reason,
+            wallet_tx_id=tx.id,
+            new_balance=tx.balance_after,
+        )
+
+        return {
+            "amount_added": amount,
+            "new_balance": tx.balance_after,
+            "wallet_id": tx.wallet_id,
+            "wallet_tx_id": tx.id,
+        }

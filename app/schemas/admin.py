@@ -123,3 +123,33 @@ class AdminPasswordResetResponse(BaseModel):
     message: str
     username: str
     email: Optional[str]
+
+
+class AdminCreditAdjustRequest(BaseModel):
+    """Admin manually adds credits to a user account."""
+    amount: int = Field(..., ge=1, le=10000, description="Number of messages to add")
+    reason: str = Field(..., min_length=1, max_length=255, description="Reason for adjustment (stored in logs)")
+    admin_password: str = Field(..., min_length=1, description="Admin's own password for verification")
+
+
+class AdminCreditAdjustResponse(BaseModel):
+    message: str
+    user_id: str
+    credits_added: int
+    new_remaining: int
+    total_purchased: int
+
+
+class AdminWalletTopUpRequest(BaseModel):
+    """Admin manually adds money to a user wallet."""
+    amount: int = Field(..., ge=1, description="Amount in Rials to add")
+    reason: str = Field(..., min_length=1, max_length=255, description="Reason for adjustment (stored in logs)")
+    admin_password: str = Field(..., min_length=1, description="Admin's own password for verification")
+
+
+class AdminWalletTopUpResponse(BaseModel):
+    message: str
+    user_id: str
+    amount_added: int
+    new_balance: int
+    wallet_id: str
