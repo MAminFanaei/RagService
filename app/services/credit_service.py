@@ -86,15 +86,16 @@ class CreditService:
         """
         Record an off-topic rejection.
 
-        If rejected_count < MAX_FREE_REJECTIONS: increment only (free).
-        If rejected_count >= MAX_FREE_REJECTIONS: consume 1 credit, reset counter.
+        rejected_count is a LIFETIME counter — it never resets.
+        First MAX_FREE_REJECTIONS rejections are free.
+        Every rejection after that costs 1 credit, forever.
 
         Returns dict with charged (bool), free_rejections_remaining, credits_remaining.
         """
         credit = await CreditService.get_or_create(db, user_id)
 
         if credit.rejected_count >= settings.MAX_FREE_REJECTIONS:
-            # Charge 1 credit
+            # Lifetime free quota exhausted — charge 1 credit, counter keeps climbing
             await db.execute(
                 update(MessageCredit)
                 .where(
@@ -104,18 +105,19 @@ class CreditService:
                 .values(
                     remaining=MessageCredit.remaining - 1,
                     total_used=MessageCredit.total_used + 1,
-                    rejected_count=0,
+                    rejected_count=MessageCredit.rejected_count + 1,  # keeps counting up
                     updated_at=datetime.now(timezone.utc),
                 )
             )
             await db.flush()
             return {
                 "charged": True,
-                "free_rejections_remaining": settings.MAX_FREE_REJECTIONS,
+                "free_rejections_remaining": 0,          # lifetime quota gone, always 0
                 "credits_remaining": max(credit.remaining - 1, 0),
             }
         else:
-            new_count = credit.rejected_count + 1
+            new_count = credit.rejected_count + 1        # compute BEFORE using in return
+
             await db.execute(
                 update(MessageCredit)
                 .where(MessageCredit.user_id == user_id)
@@ -137,19 +139,8 @@ class CreditService:
         user_id: str,
         message_count: int,
     ) -> dict:
-        """
-        Purchase messages by debiting wallet.
-
-        Validates count limits and wallet balance.
-        WalletService.debit does flush() — we also flush.
-        Caller must commit().
-
-        Returns dict with purchase details.
-        Raises InsufficientWalletException (from caller) if wallet too low.
-        """
         total_price = message_count * settings.PRICE_PER_MESSAGE
 
-        # Debit wallet (raises InsufficientBalanceException if not enough)
         wallet_tx = await WalletService.debit(
             db=db,
             user_id=user_id,
@@ -157,8 +148,9 @@ class CreditService:
             description=f"Purchased {message_count} messages",
         )
 
-        # Credit messages atomically
-        credit = await CreditService.get_or_create(db, user_id)
+        # to ensure the row exists
+        await CreditService.get_or_create(db, user_id)
+
         await db.execute(
             update(MessageCredit)
             .where(MessageCredit.user_id == user_id)
@@ -170,7 +162,9 @@ class CreditService:
         )
         await db.flush()
 
-        new_remaining = credit.remaining + message_count
+        # Re-read AFTER the UPDATE to get the actual committed value
+        credit = await CreditService._get(db, user_id)
+        new_remaining = credit.remaining
 
         logger.info(
             "credits_purchased",

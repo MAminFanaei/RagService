@@ -18,7 +18,6 @@ from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
-
 from sqlalchemy.ext.asyncio import (
     create_async_engine, AsyncSession, async_sessionmaker, AsyncEngine
 )
@@ -160,18 +159,19 @@ def sync_engine(setup_test_database):
     yield engine
     engine.dispose()
 
-
 @pytest.fixture(scope="session")
 def tables(sync_engine):
     from app.core.database import Base
     from app.models.user import User
     from app.models.chat import ChatSession
     from app.models.message import Message
+    from app.models.credit import MessageCredit          # ← ADD
+    from app.payment.models.wallet import Wallet         # ← ADD
+    from app.payment.models.wallet import WalletTransaction  # ← ADD
 
     Base.metadata.create_all(bind=sync_engine)
     yield
     Base.metadata.drop_all(bind=sync_engine)
-
 
 @pytest.fixture(scope="session")
 def async_engine(setup_test_database, event_loop):
@@ -630,3 +630,161 @@ def mock_rag_engine():
         "async": True,
     })
     return mock
+
+# =============================================================================
+# CREDIT FIXTURES
+# =============================================================================
+
+@pytest.fixture
+async def test_credit(db: AsyncSession, test_user):
+    """
+    MessageCredit for test_user with FREE_MESSAGES_FOR_NEW_USERS remaining.
+    Use this when you need a user who already has a credit record.
+    """
+    from app.models.credit import MessageCredit
+    from app.config import settings
+
+    credit = MessageCredit(
+        user_id=test_user.id,
+        remaining=settings.FREE_MESSAGES_FOR_NEW_USERS,
+        total_purchased=0,
+        total_used=0,
+        rejected_count=0,
+    )
+    db.add(credit)
+    await db.flush()
+    await db.refresh(credit)
+    return credit
+
+
+@pytest.fixture
+async def zero_credit_user(db: AsyncSession, test_user):
+    """
+    test_user with 0 remaining credits.
+    Use for: consume on empty, rejection on empty, must-purchase scenarios.
+    """
+    from app.models.credit import MessageCredit
+    from app.config import settings
+
+    credit = MessageCredit(
+        user_id=test_user.id,
+        remaining=0,
+        total_purchased=0,
+        total_used=settings.FREE_MESSAGES_FOR_NEW_USERS,
+        rejected_count=0,
+    )
+    db.add(credit)
+    await db.flush()
+    await db.refresh(credit)
+    return credit
+
+
+@pytest.fixture
+async def at_max_rejections_credit(db: AsyncSession, test_user):
+    """
+    test_user whose rejected_count == MAX_FREE_REJECTIONS exactly.
+    The NEXT rejection call must charge a credit.
+    """
+    from app.models.credit import MessageCredit
+    from app.config import settings
+
+    credit = MessageCredit(
+        user_id=test_user.id,
+        remaining=settings.FREE_MESSAGES_FOR_NEW_USERS,
+        total_purchased=0,
+        total_used=0,
+        rejected_count=settings.MAX_FREE_REJECTIONS,
+    )
+    db.add(credit)
+    await db.flush()
+    await db.refresh(credit)
+    return credit
+
+
+# =============================================================================
+# WALLET FIXTURES
+# =============================================================================
+
+@pytest.fixture
+async def test_wallet(db: AsyncSession, test_user):
+    """
+    Wallet for test_user with 10x MAX purchase amount.
+    Use for: any test where purchase should succeed.
+    """
+    import uuid as _uuid
+    from app.payment.models.wallet import Wallet
+    from app.config import settings
+
+    wallet = Wallet(
+        id=str(_uuid.uuid4()),
+        user_id=test_user.id,
+        balance=settings.MAX_MESSAGE_PURCHASE * settings.PRICE_PER_MESSAGE * 10,
+    )
+    db.add(wallet)
+    await db.flush()
+    await db.refresh(wallet)
+    return wallet
+
+
+@pytest.fixture
+async def empty_wallet(db: AsyncSession, test_user):
+    """
+    Wallet for test_user with 0 balance.
+    Use for: insufficient balance → 402 tests.
+    """
+    import uuid as _uuid
+    from app.payment.models.wallet import Wallet
+
+    wallet = Wallet(
+        id=str(_uuid.uuid4()),
+        user_id=test_user.id,
+        balance=0,
+    )
+    db.add(wallet)
+    await db.flush()
+    await db.refresh(wallet)
+    return wallet
+
+
+@pytest.fixture
+async def exact_balance_wallet(db: AsyncSession, test_user):
+    """
+    Wallet with balance == MIN_MESSAGE_PURCHASE * PRICE_PER_MESSAGE exactly.
+    Boundary test: balance == required → must PASS (strict less-than check).
+    """
+    import uuid as _uuid
+    from app.payment.models.wallet import Wallet
+    from app.config import settings
+
+    exact = settings.MIN_MESSAGE_PURCHASE * settings.PRICE_PER_MESSAGE
+    wallet = Wallet(
+        id=str(_uuid.uuid4()),
+        user_id=test_user.id,
+        balance=exact,
+    )
+    db.add(wallet)
+    await db.flush()
+    await db.refresh(wallet)
+    return wallet
+
+
+@pytest.fixture
+async def one_short_wallet(db: AsyncSession, test_user):
+    """
+    Wallet with balance == (MIN_MESSAGE_PURCHASE * PRICE_PER_MESSAGE) - 1.
+    Boundary test: one Rial short → must FAIL with 402.
+    """
+    import uuid as _uuid
+    from app.payment.models.wallet import Wallet
+    from app.config import settings
+
+    one_short = (settings.MIN_MESSAGE_PURCHASE * settings.PRICE_PER_MESSAGE) - 1
+    wallet = Wallet(
+        id=str(_uuid.uuid4()),
+        user_id=test_user.id,
+        balance=one_short,
+    )
+    db.add(wallet)
+    await db.flush()
+    await db.refresh(wallet)
+    return wallet

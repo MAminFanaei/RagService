@@ -9,32 +9,13 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models.user import User
+from app.schemas.credit import PricingResponse, PurchaseRequest, PurchaseResponse
 from app.services.credit_service import CreditService
 from app.payment.services.wallet_service import WalletService
 from app.middleware.exceptions import BadRequestException, PaymentRequiredException
 from app.config import settings
 
 router = APIRouter(prefix="/credits", tags=["Credits"])
-
-
-class PurchaseRequest(BaseModel):
-    message_count: int = Field(..., ge=1, description="Number of messages to buy")
-
-
-class PurchaseResponse(BaseModel):
-    purchased: int
-    amount_charged: int
-    remaining: int
-    wallet_tx_id: str
-
-
-class PricingResponse(BaseModel):
-    price_per_message: int
-    free_messages_for_new_users: int
-    min_purchase: int
-    max_purchase: int
-    currency: str = "IRR"
-
 
 @router.get("/pricing", response_model=PricingResponse)
 async def get_pricing():

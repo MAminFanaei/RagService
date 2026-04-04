@@ -5,10 +5,9 @@ class AppException(Exception):
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
     error_code: str = "INTERNAL_ERROR"
     
-    def __init__(self, message: str = "An unexpected error occurred"):
+    def __init__(self, message: str = "An unexpected error occurred", **kwargs):
         self.message = message
         super().__init__(message)
-
 
 # ─────────────────────────────────────────────────────────────
 # HTTP Exceptions
@@ -115,7 +114,9 @@ class PaymentRequiredException(AppException):
     error_code = "PAYMENT_REQUIRED"
 
     def __init__(self, message: str = "Payment required", data: dict = None):
-        super().__init__(message, data)
+        self.data = data
+        super().__init__(message)          #  only message goes up, data stays here
+
 
 
 class InsufficientCreditsException(AppException):
@@ -124,4 +125,5 @@ class InsufficientCreditsException(AppException):
     error_code = "INSUFFICIENT_CREDITS"
 
     def __init__(self, message: str = "No remaining messages", data: dict = None):
-        super().__init__(message, data)
+        self.data = data
+        super().__init__(message)
