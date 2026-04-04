@@ -142,17 +142,6 @@ async def close_redis():
 # INITIALIZATION & CLEANUP
 # =============================================================================
 
-def init_db_sync():
-    """
-    Initialize database tables (sync - for startup).
-    
-    Uses sync engine because this runs before the async event loop
-    is fully operational during FastAPI lifespan startup.
-    """
-    Base.metadata.create_all(bind=sync_engine)
-    logger.info("✓ Database tables initialized (sync)")
-
-
 async def close_db():
     """Close async database connections."""
     await async_engine.dispose()

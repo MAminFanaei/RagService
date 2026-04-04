@@ -19,7 +19,7 @@ import sys
 from app.payment.routers import payment_router
 from app.core.rag_engine import create_rag_engine
 from app.config import settings
-from app.core.database import init_db_sync, AsyncSessionLocal, cleanup_all
+from app.core.database import  AsyncSessionLocal, cleanup_all
 from app.api.v1 import auth, chats, admin , credits
 from app.middleware.error_handler import setup_exception_handlers
 from app.services.user_service import UserService
@@ -56,10 +56,6 @@ async def lifespan(app: FastAPI):
     # Startup
     app.state.shutting_down = False
     logger.info("✓ Starting RAG Service", version=settings.APP_VERSION)
-    
-    # Initialize database tables (sync - before event loop fully running)
-    init_db_sync()
-    logger.info("✓ MySQL initialized")
     
     # Initialize RAG engine
     app.state.rag_engine = create_rag_engine()
