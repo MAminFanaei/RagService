@@ -206,7 +206,7 @@ async def admin_reset_user_password(
     # 1. Cannot reset your own password through this endpoint
     if user_id == current_admin.id:
         raise BadRequestException(
-            "Cannot reset your own password through this endpoint. Use /auth/me/password instead."
+            "Cannot reset your own password through this endpoint. Use /auth/me/reset-password instead."
         )
     
     # 2. Verify admin password

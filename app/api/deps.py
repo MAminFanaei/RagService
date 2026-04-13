@@ -30,13 +30,12 @@ async def get_current_user(
     Fully async - no blocking calls.
     """
     token = credentials.credentials
-    
+    # Decode and validate token
+    payload = decode_token(token)
+
     # Check if token is blacklisted (logged out)
     if await is_token_blacklisted(redis_client, token):
         raise UnauthorizedException("Token has been revoked")
-    
-    # Decode and validate token
-    payload = decode_token(token)
     
     if not payload:
         raise UnauthorizedException("Invalid authentication credentials")

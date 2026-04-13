@@ -15,7 +15,7 @@ import base64
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock , patch
 
 from jose import jwt as jose_jwt
 
@@ -29,11 +29,22 @@ from app.core.security import (
 )
 from app.config import settings
 
-
 # =============================================================================
 # JWT SECURITY ATTACKS
 # =============================================================================
 
+
+def _mock_otp_valid():
+    """Patch both OTP proof checks to be no-ops (valid proof)."""
+    validate = patch(
+        "app.api.v1.auth.OtpService.validate_proof_without_consuming",
+        new_callable=AsyncMock,
+    )
+    consume = patch(
+        "app.api.v1.auth.OtpService.consume_verification_proof",
+        new_callable=AsyncMock,
+    )
+    return validate, consume
 
 class TestJWTSecurityAttacks:
     """Test JWT security vulnerabilities — rebuilt from legacy test_authentication.py."""
@@ -212,17 +223,20 @@ class TestBruteForceProtection:
     async def test_registration_rate_limiting(self, client):
         """Test that registration attempts are rate limited."""
         responses = []
-
-        for i in range(10):
-            response = await client.post(
-                "/api/v1/auth/register",
-                json={
-                    "email": f"test{i}_{uuid.uuid4().hex[:8]}@example.com",
-                    "username": f"user{i}_{uuid.uuid4().hex[:8]}",
-                    "password": "SecurePassword123!"
-                }
-            )
-            responses.append(response.status_code)
+        validate, consume = _mock_otp_valid()
+        with validate, consume:
+            for i in range(10):
+                response = await client.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "email": f"test{i}_{uuid.uuid4().hex[:8]}@example.com",
+                        "username": f"user{i}_{uuid.uuid4().hex[:8]}",
+                        "password": "SecurePassword123!",
+                        "phone_number": f"0912345{i:04d}",
+                        "otp_proof": "valid-proof-token",
+                    },
+                )
+                responses.append(response.status_code)
 
         assert all(r in [201, 400, 422, 429] for r in responses)
 
@@ -355,19 +369,18 @@ class TestUserEnumeration:
 
     @pytest.mark.asyncio
     async def test_registration_user_exists(self, client, test_user):
-        """
-        Registration error for existing email might reveal user exists.
-        This is a trade-off between UX and security.
-        Document your choice.
-        """
-        response = await client.post(
-            "/api/v1/auth/register",
-            json={
-                "email": test_user.email,
-                "username": f"different_{uuid.uuid4().hex[:8]}",
-                "password": "SecurePassword123!"
-            }
-        )
+        validate, consume = _mock_otp_valid()
+        with validate, consume:
+            response = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": test_user.email,
+                    "username": f"different_{uuid.uuid4().hex[:8]}",
+                    "password": "SecurePassword123!",
+                    "phone_number": "09123456789",
+                    "otp_proof": "valid-proof-token",
+                },
+            )
         assert response.status_code == 400
 
     @pytest.mark.asyncio

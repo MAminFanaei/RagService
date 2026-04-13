@@ -1,9 +1,12 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from app.middleware.exceptions import BadRequestException
 from app.models.user import AuthProvider
 import re
+
+
+PHONE_REGEX = re.compile(r"^(09\d{9}|\+989\d{9}|989\d{9})$")
 
 
 class UserBase(BaseModel):
@@ -37,8 +40,24 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=6,max_length=128)
-    
+    phone_number: str
+    otp_proof: str
+    password: str = Field(..., min_length=6, max_length=128)
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def validate_phone(cls, v):
+        if not v:
+            raise BadRequestException("Phone number is required")
+        phone = str(v).strip()
+        if not PHONE_REGEX.match(phone):
+            raise BadRequestException("Phone number format is invalid")
+        if phone.startswith("+98"):
+            return "0" + phone[3:]
+        if phone.startswith("98"):
+            return "0" + phone[2:]
+        return phone
+
     @field_validator('password')
     @classmethod
     def password_strength(cls, v):
@@ -61,14 +80,14 @@ class UserResponse(UserBase):
     id: Optional[str] = None
     auth_provider: Optional[AuthProvider] = None
     email: Optional[EmailStr] = None      # was EmailStr (required)
-    username: Optional[str] = None 
+    username: Optional[str] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None # Required - no default
     is_verified: Optional[bool] = None
     avatar_url: Optional[str] = None
     created_at: datetime  # Required - no default
     last_login_at: Optional[datetime] = None
-    
+
     # User Credit Info
     remaining_messages: Optional[int] = None
     total_purchased: Optional[int] = None
@@ -85,7 +104,7 @@ class UserResponse(UserBase):
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=6,max_length=128)
-    
+
     @field_validator('new_password')
     @classmethod
     def password_strength(cls, v):

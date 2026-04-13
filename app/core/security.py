@@ -10,6 +10,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import re
+import secrets
 from typing import Optional, Dict, Any
 
 from jose import JWTError, jwt
@@ -95,7 +96,7 @@ def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta]
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+
     to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
@@ -108,6 +109,19 @@ def create_refresh_token(data: Dict[str, Any]) -> str:
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
+def create_otp_proof_token(phone_number: str, purpose: str, jti: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_VERIFY_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": phone_number,
+        "phone_number": phone_number,
+        "purpose": purpose,
+        "jti": jti,
+        "exp": expire,
+        "type": "otp_proof",
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
 def decode_token(token: str) -> Optional[Dict[str, Any]]:
     """Decode and verify JWT token."""
     if not token:
@@ -116,6 +130,15 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except JWTError:
         return None
+
+
+def decode_otp_proof_token(token: str) -> Optional[Dict[str, Any]]:
+    payload = decode_token(token)
+    if not payload:
+        return None
+    if payload.get("type") != "otp_proof":
+        return None
+    return payload
 
 
 def create_token_pair(user_id: str, email: str = None, username: str = None, is_admin: bool = False) -> Dict[str, str]:
@@ -158,7 +181,7 @@ async def blacklist_token(redis_client: aioredis.Redis, token: str, payload: Dic
         ttl = get_token_remaining_ttl(payload)
         if ttl <= 0:
             return True  # Already expired
-        
+
         key = f"{TOKEN_BLACKLIST_PREFIX}{token_id}"
         await redis_client.set(key, payload.get("sub", "1"), ex=ttl)
         return True
@@ -176,7 +199,7 @@ async def is_token_blacklisted(redis_client: aioredis.Redis, token: str) -> bool
         return result > 0
     except Exception as e:
         logger.warning("Failed to check token blacklist", error=str(e))
-        return False  # Fail open for availability
+        return False  # Fail open for availability (black listing is only used for logged out users so it does almost no harm to pass them)
 
 
 # =============================================================================
@@ -221,10 +244,10 @@ def sanitize_user_input(text: str) -> str:
     """Sanitize user input to prevent prompt injection."""
     if not text:
         return ""
-    
+
     sanitized = text
     sanitized = re.sub(r'<[^>]+>', '', sanitized)
-    
+
     injection_patterns = [
         r'ignore\s+(previous|above|all)\s+instructions?',
         r'disregard\s+(previous|above|all)\s+instructions?',
@@ -239,7 +262,7 @@ def sanitize_user_input(text: str) -> str:
         r'<<SYS>>',
         r'<</SYS>>',
     ]
-    
+
     for pattern in injection_patterns:
         sanitized = re.sub(pattern, '[FILTERED]', sanitized, flags=re.IGNORECASE)
     return sanitized.strip()

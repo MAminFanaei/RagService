@@ -8,22 +8,46 @@ All tests use httpx.AsyncClient (async) matching the async FastAPI app.
 import pytest
 import uuid
 
+from unittest.mock import patch, AsyncMock
+
 from app.models.user import User
 from app.core.security import create_token_pair, decode_token
+
+def _register_payload(**overrides):
+    """Build a valid registration payload with OTP fields."""
+    base = {
+        "email": f"new_{uuid.uuid4().hex[:8]}@example.com",
+        "username": f"new_{uuid.uuid4().hex[:8]}",
+        "password": "SecurePassword123!",
+        "phone_number": "09123456789",
+        "otp_proof": "valid-proof-token",
+    }
+    base.update(overrides)
+    return base
+
+
+def _mock_otp_valid():
+    """Patch both OTP proof checks to be no-ops (valid proof)."""
+    validate = patch(
+        "app.api.v1.auth.OtpService.validate_proof_without_consuming",
+        new_callable=AsyncMock,
+    )
+    consume = patch(
+        "app.api.v1.auth.OtpService.consume_verification_proof",
+        new_callable=AsyncMock,
+    )
+    return validate, consume
 
 
 class TestRegistration:
     @pytest.mark.asyncio
     async def test_register_success(self, client):
-        response = await client.post(
-            "/api/v1/auth/register",
-            json={
-                "email": f"new_{uuid.uuid4().hex[:8]}@example.com",
-                "username": f"new_{uuid.uuid4().hex[:8]}",
-                "password": "SecurePassword123!",
-                "full_name": "New User",
-            },
-        )
+        validate, consume = _mock_otp_valid()
+        with validate, consume:
+            response = await client.post(
+                "/api/v1/auth/register",
+                json=_register_payload(full_name="New User"),
+            )
         assert response.status_code == 201
         data = response.json()
         assert "access_token" in data
@@ -32,54 +56,49 @@ class TestRegistration:
 
     @pytest.mark.asyncio
     async def test_register_duplicate_email(self, client, test_user):
-        response = await client.post(
-            "/api/v1/auth/register",
-            json={
-                "email": test_user.email,
-                "username": f"unique_{uuid.uuid4().hex[:8]}",
-                "password": "SecurePassword123!",
-            },
-        )
+        validate, consume = _mock_otp_valid()
+        with validate, consume:
+            response = await client.post(
+                "/api/v1/auth/register",
+                json=_register_payload(
+                    email=test_user.email,
+                    username=f"unique_{uuid.uuid4().hex[:8]}",
+                ),
+            )
         assert response.status_code == 400
         assert "already registered" in response.json()["message"].lower()
 
     @pytest.mark.asyncio
     async def test_register_duplicate_username(self, client, test_user):
-        response = await client.post(
-            "/api/v1/auth/register",
-            json={
-                "email": f"unique_{uuid.uuid4().hex[:8]}@example.com",
-                "username": test_user.username,
-                "password": "SecurePassword123!",
-            },
-        )
+        validate, consume = _mock_otp_valid()
+        with validate, consume:
+            response = await client.post(
+                "/api/v1/auth/register",
+                json=_register_payload(
+                    email=f"unique_{uuid.uuid4().hex[:8]}@example.com",
+                    username=test_user.username,
+                ),
+            )
         assert response.status_code == 400
         assert "username" in response.json()["message"].lower()
 
     @pytest.mark.asyncio
     async def test_register_weak_password(self, client):
+        # No OTP mock needed — pydantic validation fails before endpoint logic
         response = await client.post(
             "/api/v1/auth/register",
-            json={
-                "email": f"t_{uuid.uuid4().hex[:8]}@example.com",
-                "username": f"t_{uuid.uuid4().hex[:8]}",
-                "password": "weak",
-            },
+            json=_register_payload(password="weak"),
         )
         assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_register_invalid_email(self, client):
+        # No OTP mock needed — pydantic validation fails before endpoint logic
         response = await client.post(
             "/api/v1/auth/register",
-            json={
-                "email": "not-an-email",
-                "username": "validuser",
-                "password": "SecurePassword123!",
-            },
+            json=_register_payload(email="not-an-email"),
         )
         assert response.status_code == 422
-
 
 class TestLogin:
     @pytest.mark.asyncio
@@ -206,7 +225,7 @@ class TestPasswordChange:
     @pytest.mark.asyncio
     async def test_change_password_success(self, client, auth_headers, test_password):
         response = await client.put(
-            "/api/v1/auth/me/password",
+            "/api/v1/auth/me/reset-password",
             headers=auth_headers,
             json={"current_password": test_password, "new_password": "NewSecure456!"},
         )
@@ -215,7 +234,7 @@ class TestPasswordChange:
     @pytest.mark.asyncio
     async def test_change_password_wrong_current(self, client, auth_headers):
         response = await client.put(
-            "/api/v1/auth/me/password",
+            "/api/v1/auth/me/reset-password",
             headers=auth_headers,
             json={"current_password": "wrong", "new_password": "NewSecure456!"},
         )
@@ -224,7 +243,7 @@ class TestPasswordChange:
     @pytest.mark.asyncio
     async def test_change_password_weak_new(self, client, auth_headers, test_password):
         response = await client.put(
-            "/api/v1/auth/me/password",
+            "/api/v1/auth/me/reset-password",
             headers=auth_headers,
             json={"current_password": test_password, "new_password": "weak"},
         )
@@ -236,7 +255,7 @@ class TestEmailChange:
     async def test_change_email_success(self, client, auth_headers, test_password):
         new_email = f"new_{uuid.uuid4().hex[:8]}@example.com"
         response = await client.put(
-            "/api/v1/auth/me/email",
+            "/api/v1/auth/me/change_email",
             headers=auth_headers,
             json={"new_email": new_email, "password": test_password},
         )
@@ -248,7 +267,7 @@ class TestEmailChange:
     @pytest.mark.asyncio
     async def test_change_email_wrong_password(self, client, auth_headers):
         response = await client.put(
-            "/api/v1/auth/me/email",
+            "/api/v1/auth/me/change_email",
             headers=auth_headers,
             json={"new_email": "new@example.com", "password": "wrong"},
         )

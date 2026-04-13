@@ -33,6 +33,8 @@ class TestUserCreation:
             username="newuser",
             password="SecurePass123!",
             full_name="New User",
+            phone_number="09123456789",
+            otp_proof="dummy-proof-token",
         )
         user = await UserService.create_user(db, user_data)
 
@@ -44,7 +46,7 @@ class TestUserCreation:
         assert user.hashed_password is not None
         assert user.hashed_password != "SecurePass123!"
         assert user.is_active is True
-        assert user.is_verified is False
+        assert user.is_verified is True  # OTP verified before registration → is_verified=True
         assert user.is_admin is False
 
     @pytest.mark.asyncio
@@ -53,6 +55,8 @@ class TestUserCreation:
             email="hash_test@example.com",
             username="hashtest",
             password="SecurePass123!",
+            phone_number="09123456788",
+            otp_proof="dummy-proof-token",
         )
         user = await UserService.create_user(db, user_data)
         assert user.hashed_password.startswith("$argon2")
