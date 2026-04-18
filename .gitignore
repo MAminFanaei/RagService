@@ -8,3 +8,4 @@ docs/others/
 models/*
 what_to_do.md
 *snapshot*
+.env

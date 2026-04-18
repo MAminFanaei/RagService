@@ -24,6 +24,7 @@ class CreditService:
     async def get_or_create(db: AsyncSession, user_id: str) -> MessageCredit:
         """
         Get existing credit record or create with free messages.
+        Uses flush() only — caller must commit().
         """
         result = await db.execute(
             select(MessageCredit).where(MessageCredit.user_id == user_id)
@@ -41,10 +42,10 @@ class CreditService:
             rejected_count=0,
         )
         db.add(credit)
-        await db.flush()
+        await db.flush()  # caller owns the commit
 
         logger.info(
-            "credit_record_created",
+            "credit_record_not_found_and_created",
             user_id=user_id,
             free_messages=settings.FREE_MESSAGES_FOR_NEW_USERS,
         )
@@ -58,7 +59,7 @@ class CreditService:
         Returns new remaining count.
         Atomic — uses SQL-level decrement with remaining > 0 guard.
         """
-        result = await db.execute(
+        await db.execute(
             update(MessageCredit)
             .where(
                 MessageCredit.user_id == user_id,
@@ -71,15 +72,22 @@ class CreditService:
                 updated_at=datetime.now(timezone.utc),
             )
         )
+
         await db.flush()
 
-        if result.rowcount == 0:
-            logger.warning("consume_one_failed_no_credits", user_id=user_id)
+        # Always re-read fresh from DB — never trust identity map after
+        # add_message()'s internal commits have dirtied the session cache.
+        credit = await CreditService._get_fresh(db, user_id)
+        if credit is None:
+            logger.warning("consume_one_credit_row_missing", user_id=user_id)
             return 0
-
-        # Re-read to get actual value
-        credit = await CreditService._get(db, user_id)
-        return credit.remaining if credit else 0
+        
+        logger.info(
+                "credit_consumed",
+                user_id=user_id,
+                remaining=credit.remaining,
+            )
+        return credit.remaining
 
     @staticmethod
     async def record_rejection(db: AsyncSession, user_id: str) -> dict:
@@ -92,7 +100,13 @@ class CreditService:
 
         Returns dict with charged (bool), free_rejections_remaining, credits_remaining.
         """
-        credit = await CreditService.get_or_create(db, user_id)
+        # Always read fresh — this runs after add_message() commits, so the
+        # identity map may hold a stale object.
+        credit = await CreditService._get_fresh(db, user_id)
+        if credit is None:
+            # Should never happen (get_or_create runs before RAG), but be safe.
+            logger.warning("record_rejection_credit_row_missing", user_id=user_id)
+            return {"charged": False, "free_rejections_remaining": 0, "credits_remaining": 0}
 
         if credit.rejected_count >= settings.MAX_FREE_REJECTIONS:
             # Lifetime free quota exhausted — charge 1 credit, counter keeps climbing
@@ -105,18 +119,27 @@ class CreditService:
                 .values(
                     remaining=MessageCredit.remaining - 1,
                     total_used=MessageCredit.total_used + 1,
-                    rejected_count=MessageCredit.rejected_count + 1,  # keeps counting up
+                    rejected_count=MessageCredit.rejected_count + 1,
                     updated_at=datetime.now(timezone.utc),
                 )
             )
             await db.flush()
+            
+            # Re-read to get the real post-UPDATE value
+            updated = await CreditService._get_fresh(db, user_id)
+            logger.info(
+                "rejection_charged_no_free_quota_left",
+                user_id=user_id,
+                credits_remaining=updated.remaining if updated else 0,
+            )
+            
             return {
                 "charged": True,
-                "free_rejections_remaining": 0,          # lifetime quota gone, always 0
-                "credits_remaining": max(credit.remaining - 1, 0),
+                "free_rejections_remaining": 0,
+                "credits_remaining": updated.remaining if updated else 0,
             }
         else:
-            new_count = credit.rejected_count + 1        # compute BEFORE using in return
+            new_count = credit.rejected_count + 1
 
             await db.execute(
                 update(MessageCredit)
@@ -127,10 +150,19 @@ class CreditService:
                 )
             )
             await db.flush()
+            
+            logger.info(
+                "rejection_free_quota_available",
+                user_id=user_id,
+                rejected_count=new_count,
+                free_rejections_remaining=settings.MAX_FREE_REJECTIONS - new_count,
+                credits_remaining=credit.remaining,
+            )
+            
             return {
                 "charged": False,
                 "free_rejections_remaining": settings.MAX_FREE_REJECTIONS - new_count,
-                "credits_remaining": credit.remaining,
+                "credits_remaining": credit.remaining,  # unchanged, no need to re-read
             }
 
     @staticmethod
@@ -148,7 +180,7 @@ class CreditService:
             description=f"Purchased {message_count} messages",
         )
 
-        # to ensure the row exists
+        # ensure the row exists
         await CreditService.get_or_create(db, user_id)
 
         await db.execute(
@@ -162,9 +194,8 @@ class CreditService:
         )
         await db.flush()
 
-        # Re-read AFTER the UPDATE to get the actual committed value
-        credit = await CreditService._get(db, user_id)
-        new_remaining = credit.remaining
+        credit = await CreditService._get_fresh(db, user_id)
+        new_remaining = credit.remaining if credit else 0
 
         logger.info(
             "credits_purchased",
@@ -193,11 +224,27 @@ class CreditService:
 
     @staticmethod
     async def _get(db: AsyncSession, user_id: str) -> MessageCredit | None:
+        """Standard get — may return cached identity-map object. Use only
+        when you have not gone through any intermediate commits in this session."""
         result = await db.execute(
             select(MessageCredit).where(MessageCredit.user_id == user_id)
         )
         return result.scalar_one_or_none()
-    
+
+    @staticmethod
+    async def _get_fresh(db: AsyncSession, user_id: str) -> MessageCredit | None:
+        """
+        Always hits the DB and overwrites any stale identity-map entry.
+        Use this after any UPDATE + flush, especially when the session has
+        gone through intermediate commits (e.g. add_message() commits).
+        """
+        result = await db.execute(
+            select(MessageCredit)
+            .where(MessageCredit.user_id == user_id)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
     @staticmethod
     async def admin_add_credits(
         db: AsyncSession,
@@ -211,7 +258,7 @@ class CreditService:
         Does NOT debit wallet — this is a free grant.
         Caller must commit().
         """
-        credit = await CreditService.get_or_create(db, user_id)
+        await CreditService.get_or_create(db, user_id)
 
         await db.execute(
             update(MessageCredit)
@@ -224,8 +271,7 @@ class CreditService:
         )
         await db.flush()
 
-        # Re-read after UPDATE — same pattern as purchase()
-        refreshed = await CreditService._get(db, user_id)
+        refreshed = await CreditService._get_fresh(db, user_id)
 
         logger.info(
             "admin_credits_added",
@@ -241,7 +287,6 @@ class CreditService:
             "new_remaining": refreshed.remaining,
             "total_purchased": refreshed.total_purchased,
         }
-
 
     @staticmethod
     async def admin_add_wallet_balance(

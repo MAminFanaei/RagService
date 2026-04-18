@@ -8,7 +8,7 @@ This is separate from the main app's config.py to maintain modularity.
 Both config classes read from the same .env file but each only cares
 about its own variables (extra="ignore" ensures no conflicts).
 """
-
+from app.config import ENV_FILE
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -17,8 +17,6 @@ from app.payment.core.constants import (
     MAX_PAYMENT_AMOUNT as _DEFAULT_MAX_AMOUNT,
     SEP_REVERSE_WINDOW_MINUTES as _DEFAULT_REVERSE_WINDOW,
 )
-
-
 class PaymentSettings(BaseSettings):
     """
     Payment service configuration.
@@ -30,16 +28,11 @@ class PaymentSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────
     # SEP Gateway URLs
     # ─────────────────────────────────────────────────────────
-    SEP_TERMINAL_ID: str = "0000"
-    SEP_PAYMENT_URL: str = "https://sep.shaparak.ir/OnlinePG/OnlinePG"
-    SEP_SEND_TOKEN_URL: str = "https://sep.shaparak.ir/OnlinePG/SendToken"
-    SEP_VERIFY_URL: str = (
-        "https://sep.shaparak.ir/verifyTxnRandomSessionkey/ipg/VerifyTransaction"
-    )
-    SEP_REVERSE_URL: str = (
-        "https://sep.shaparak.ir/verifyTxnRandomSessionkey/ipg/ReverseTransaction"
-    )
-
+    SEP_TERMINAL_ID: str 
+    SEP_PAYMENT_URL: str 
+    SEP_SEND_TOKEN_URL: str 
+    SEP_VERIFY_URL: str 
+    SEP_REVERSE_URL: str 
     # Token expiry: min 20, max 3600 minutes (SEP enforced)
     SEP_TOKEN_EXPIRY_MIN: int = 20
 
@@ -49,11 +42,11 @@ class PaymentSettings(BaseSettings):
     
     # URL that SEP will POST callback data to after payment
     # Must match the RedirectURL sent during token request
-    PAYMENT_CALLBACK_URL: str = "http://localhost:8000/api/v1/payment/callback"
+    PAYMENT_CALLBACK_URL: str 
     
     # Frontend URL where user is redirected after callback processing
     # Result params are appended as query string: ?payment_id=xxx&status=success
-    FRONTEND_PAYMENT_RESULT_URL: str = "http://localhost:3000/payment/result"
+    FRONTEND_PAYMENT_RESULT_URL: str 
 
     # ─────────────────────────────────────────────────────────
     # Payment Amount Limits (in Rials)
@@ -91,6 +84,7 @@ class PaymentSettings(BaseSettings):
     SEP_HTTP_TIMEOUT: int = 30
 
     model_config = {
+        "env_file" : str(ENV_FILE),
         "extra": "ignore",  # Ignore vars from main app (DB_*, REDIS_*, etc.)
         "case_sensitive": True,
     }

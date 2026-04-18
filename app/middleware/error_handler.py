@@ -50,18 +50,24 @@ def setup_exception_handlers(app: FastAPI):
             "App exception",
             error_code=exc.error_code,
             message=exc.message,
-            path=request.url.path
+            path=request.url.path,
+            context=getattr(exc, 'context', None),
         )
 
         # Collect headers from exception
         headers = getattr(exc, 'headers', None) or {}
         content = {
             "error": exc.error_code,
-                "message": exc.message
+            "message": exc.message
         }
 
         if hasattr(exc, "data") and exc.data is not None:
             content["data"] = exc.data
+        
+        # ADD these lines - show context in debug mode
+        if settings.DEBUG and hasattr(exc, "context") and exc.context:
+            content["context"] = exc.context
+            
         # Add Retry-After for rate limits
         if isinstance(exc, RateLimitException):
             headers["Retry-After"] = str(exc.retry_after)

@@ -51,7 +51,12 @@ class UserCreate(UserBase):
             raise BadRequestException("Phone number is required")
         phone = str(v).strip()
         if not PHONE_REGEX.match(phone):
-            raise BadRequestException("Phone number format is invalid")
+            raise BadRequestException(
+                "Phone number format is invalid" ,
+                context={
+                    "received_phone": phone,
+                    "expected_format": "09xxxxxxxxx or +989xxxxxxxxx or 989xxxxxxxxx"
+                })
         if phone.startswith("+98"):
             return "0" + phone[3:]
         if phone.startswith("98"):
@@ -76,23 +81,22 @@ class UserLogin(BaseModel):
     login: str  # Can be email or username
     password: str
 
-class UserResponse(UserBase):
+class UserResponse(BaseModel):  
     id: Optional[str] = None
-    auth_provider: Optional[AuthProvider] = None
-    email: Optional[EmailStr] = None      # was EmailStr (required)
+    email: Optional[EmailStr] = None
     username: Optional[str] = None
+    full_name: Optional[str] = None
+    auth_provider: Optional[AuthProvider] = None
     is_active: Optional[bool] = None
-    is_admin: Optional[bool] = None # Required - no default
+    is_admin: Optional[bool] = None
     is_verified: Optional[bool] = None
     avatar_url: Optional[str] = None
-    created_at: datetime  # Required - no default
+    created_at: Optional[datetime] = None
     last_login_at: Optional[datetime] = None
-
-    # User Credit Info
+    # Credit info
     remaining_messages: Optional[int] = None
     total_purchased: Optional[int] = None
     total_used: Optional[int] = None
-
     class Config:
         from_attributes = True
 

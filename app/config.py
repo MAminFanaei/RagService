@@ -2,6 +2,11 @@ from pydantic_settings import BaseSettings
 from typing import List
 import os
 
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_FILE = BASE_DIR / ".env" # for the payment to know where is the .env
+
 
 class Settings(BaseSettings):
     # Application

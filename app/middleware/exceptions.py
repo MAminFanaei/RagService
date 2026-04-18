@@ -18,9 +18,10 @@ class BadRequestException(AppException):
     status_code = status.HTTP_400_BAD_REQUEST
     error_code = "BAD_REQUEST"
     
-    def __init__(self, message: str = "An unexpected error occurred", data: dict = None):
+    def __init__(self, message: str = "An unexpected error occurred", data: dict = None,context: dict = None):
         self.message = message
         self.data = data
+        self.context = context or {}
         super().__init__(message)
 
 

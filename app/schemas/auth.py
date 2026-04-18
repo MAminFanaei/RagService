@@ -47,7 +47,12 @@ class OTPRequestBody(BaseModel):
     def validate_phone(cls, v):
         phone = str(v).strip()
         if not PHONE_REGEX.match(phone):
-            raise BadRequestException("Phone number format is invalid")
+            raise BadRequestException(
+                "Phone number format is invalid" ,
+                context={
+                    "received_phone": phone,
+                    "expected_format": "09xxxxxxxxx or +989xxxxxxxxx or 989xxxxxxxxx"
+                })
         if phone.startswith("+98"):
             return "0" + phone[3:]
         if phone.startswith("98"):
@@ -65,7 +70,12 @@ class OTPVerifyBody(BaseModel):
     def validate_phone(cls, v):
         phone = str(v).strip()
         if not PHONE_REGEX.match(phone):
-            raise BadRequestException("Phone number format is invalid")
+            raise BadRequestException(
+                "Phone number format is invalid" ,
+                context={
+                    "received_phone": phone,
+                    "expected_format": "09xxxxxxxxx or +989xxxxxxxxx or 989xxxxxxxxx"
+                })
         if phone.startswith("+98"):
             return "0" + phone[3:]
         if phone.startswith("98"):
@@ -103,7 +113,12 @@ class PasswordResetWithOTPRequest(BaseModel):
     def validate_phone(cls, v):
         phone = str(v).strip()
         if not PHONE_REGEX.match(phone):
-            raise BadRequestException("Phone number format is invalid")
+            raise BadRequestException(
+                "Phone number format is invalid" ,
+                context={
+                    "received_phone": phone,
+                    "expected_format": "09xxxxxxxxx or +989xxxxxxxxx or 989xxxxxxxxx"
+                })
         if phone.startswith("+98"):
             return "0" + phone[3:]
         if phone.startswith("98"):
@@ -131,7 +146,12 @@ class PhoneChangeRequest(BaseModel):
     def validate_phone(cls, v):
         phone = str(v).strip()
         if not PHONE_REGEX.match(phone):
-            raise BadRequestException("Phone number format is invalid")
+            raise BadRequestException(
+                "Phone number format is invalid" ,
+                context={
+                    "received_phone": phone,
+                    "expected_format": "09xxxxxxxxx or +989xxxxxxxxx or 989xxxxxxxxx"
+                })
         if phone.startswith("+98"):
             return "0" + phone[3:]
         if phone.startswith("98"):
