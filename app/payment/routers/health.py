@@ -16,7 +16,7 @@ from app.payment.config import payment_settings
 
 logger = structlog.get_logger()
 
-router = APIRouter(tags=["Payment Health"])
+router = APIRouter()
 
 
 @router.get("/health")

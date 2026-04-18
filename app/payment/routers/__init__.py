@@ -36,6 +36,7 @@ payment_router.include_router(wallet_router, prefix="/wallet")
 payment_router.include_router(discount_router, prefix="/discount")
 
 # Admin (admin JWT required for all endpoints)
-payment_router.include_router(admin_router, prefix="/admin", tags=["Payment Admin"])
+payment_router.include_router(admin_router, prefix="/admin")
+# payment_router.include_router(admin_router, prefix="/admin", tags=["Payment Admin"])
 
 __all__ = ["payment_router"]

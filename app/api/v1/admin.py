@@ -54,20 +54,20 @@ async def list_all_users(
     return await UserService.get_all_users_admin(db=db, skip=skip, limit=limit, include_inactive=include_inactive, search=search)
 
 
-@router.get("/users/{user_id}", response_model=UserStatsResponse)
-async def get_user_details(user_id: str, admin: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    user = await UserService.get_by_id(db, user_id)
-    if not user:
-        raise NotFoundException("User not found")
-    stats = await UserService.get_user_stats(db, user_id)
-    return {
-        "id": user.id, "email": user.email, "username": user.username,
-        "auth_provider": user.auth_provider.value, "is_active": user.is_active,
-        "is_admin": user.is_admin, "created_at": user.created_at,
-        "last_login_at": user.last_login_at, "total_chats": stats.get("total_chats", 0),
-        "total_messages": stats.get("total_messages", 0), "messages_today": stats.get("messages_today", 0),
-        "max_messages_per_day": user.max_messages_per_day, "rate_limit_per_minute": user.rate_limit_per_minute
-    }
+# @router.get("/users/{user_id}", response_model=UserStatsResponse)
+# async def get_user_details(user_id: str, admin: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+#     user = await UserService.get_by_id(db, user_id)
+#     if not user:
+#         raise NotFoundException("User not found")
+#     stats = await UserService.get_user_stats(db, user_id)
+#     return {
+#         "id": user.id, "email": user.email, "username": user.username,
+#         "auth_provider": user.auth_provider.value, "is_active": user.is_active,
+#         "is_admin": user.is_admin, "created_at": user.created_at,
+#         "last_login_at": user.last_login_at, "total_chats": stats.get("total_chats", 0),
+#         "total_messages": stats.get("total_messages", 0), "messages_today": stats.get("messages_today", 0),
+#         "max_messages_per_day": user.max_messages_per_day, "rate_limit_per_minute": user.rate_limit_per_minute
+#     }
 
 
 @router.patch("/users/{user_id}", response_model=UserStatsResponse)
@@ -97,21 +97,21 @@ async def update_user_settings(user_id: str, updates: AdminUserUpdate, admin: Us
     }
 
 
-@router.get("/users/{user_id}/conversations", response_model=List[ConversationExport])
-async def export_user_conversations(user_id: str, admin: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    user = await UserService.get_by_id(db, user_id)
-    if not user:
-        raise NotFoundException("User not found")
+# @router.get("/users/{user_id}/conversations", response_model=List[ConversationExport])
+# async def export_user_conversations(user_id: str, admin: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+#     user = await UserService.get_by_id(db, user_id)
+#     if not user:
+#         raise NotFoundException("User not found")
     
-    result = await db.execute(select(ChatSession).where(ChatSession.user_id == user_id).order_by(ChatSession.created_at.desc()))
-    chats = result.scalars().all()
+#     result = await db.execute(select(ChatSession).where(ChatSession.user_id == user_id).order_by(ChatSession.created_at.desc()))
+#     chats = result.scalars().all()
     
-    conversations = []
-    for chat in chats:
-        conv = await ChatService.export_conversation(db, chat.id)
-        if conv:
-            conversations.append(conv)
-    return conversations
+#     conversations = []
+#     for chat in chats:
+#         conv = await ChatService.export_conversation(db, chat.id)
+#         if conv:
+#             conversations.append(conv)
+#     return conversations
 
 
 @router.get("/stats/user_usage")
