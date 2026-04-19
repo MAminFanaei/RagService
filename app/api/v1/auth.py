@@ -20,7 +20,7 @@ from app.core.feature_flags import require_feature
 from app.middleware.exceptions import BadRequestException, InternalException, NotImplementedException, UnauthorizedException
 from app.services.otp_service import OtpService
 from app.schemas.user import (
-    UserCreate, UserLogin, UserResponse,
+    AccountDeleteRequest, UserCreate, UserLogin, UserResponse,
     PasswordChangeRequest, EmailChangeRequest, ProfileUpdateRequest,
     PasswordChangeResponse, EmailChangeResponse, ProfileUpdateResponse , SuccessResponse
 )
@@ -312,4 +312,48 @@ async def verify_otp(payload: OTPVerifyBody, redis: aioredis.Redis = Depends(get
     }
 
 
-
+@router.delete("/me", status_code=status.HTTP_200_OK)
+async def delete_account(
+    payload: AccountDeleteRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """
+    Soft-delete current user's account.
+    
+    Requirements:
+        - Correct password
+        - confirm_deletion=true
+        - No wallet balance OR forfeit_balance=true
+        - No pending payments <1 hour old
+    
+    Actions:
+        - Marks account inactive (is_active=False)
+        - Anonymizes email/phone/username
+        - Cancels old pending payments (>1h)
+        - Keeps payment/wallet records (compliance)
+        - Blacklists current token (logout)
+    
+    Note: Chat history will be deleted in 30 days (manual cleanup).
+    """
+    # Perform soft delete with all validation checks
+    result = await UserService.soft_delete_account(
+        db=db,
+        user_id=current_user.id,
+        password=payload.password,
+        confirm_deletion=payload.confirm_deletion,
+        forfeit_balance=payload.forfeit_balance
+    )
+    
+    # Blacklist current token (same pattern as logout endpoint)
+    token = credentials.credentials
+    token_payload = decode_token(token)
+    if token_payload:
+        await blacklist_token(redis, token, token_payload)
+    
+    return {
+        "message": "Account successfully deleted",
+        "details": result
+    }

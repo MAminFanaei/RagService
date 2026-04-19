@@ -456,3 +456,175 @@ class UserService:
         await db.commit()
 
         return stats
+    
+
+    @staticmethod
+    async def soft_delete_account(
+        db: AsyncSession,
+        user_id: str,
+        password: str,
+        confirm_deletion: bool,
+        forfeit_balance: bool = False ) -> Dict[str, Any]:
+        from app.payment.services.wallet_service import WalletService
+        from app.payment.models.payment import Payment
+        from app.payment.core.constants import PaymentStatus
+        from datetime import timedelta
+        import structlog
+        
+        logger = structlog.get_logger()
+        
+        # ═══════════════════════════════════════════════════════════
+        # STEP 1: Validate user exists and is active
+        # ═══════════════════════════════════════════════════════════
+        user = await UserService.get_by_id(db, user_id)
+        if not user:
+            raise NotFoundException("User not found")
+        
+        if not user.is_active:
+            raise BadRequestException("Account is already deleted")
+        
+        # ═══════════════════════════════════════════════════════════
+        # STEP 2: Verify password
+        # ═══════════════════════════════════════════════════════════
+        if not await verify_password_async(password, user.hashed_password):
+            raise BadRequestException("Incorrect password")
+        # ═══════════════════════════════════════════════════════════
+        # STEP 2.5: Check deletion confirmation
+        # ═══════════════════════════════════════════════════════════
+        if not confirm_deletion:
+            raise BadRequestException(
+                "You must confirm account deletion by setting confirm_deletion=true"
+            )
+        # ═══════════════════════════════════════════════════════════
+        # STEP 3: Check wallet balance
+        # ═══════════════════════════════════════════════════════════
+        from app.middleware.exceptions import PaymentRequiredException
+        
+        wallet = await WalletService.get_or_create_wallet(db, user_id)
+        
+        if wallet.balance > 0 and not forfeit_balance:
+            raise PaymentRequiredException(
+                message=f"Account has remaining balance: {wallet.balance:,} IRR",
+                data={
+                    "wallet_balance": wallet.balance,
+                    "action_required": "confirm_forfeiture",
+                    "instructions": "Set forfeit_balance=true to proceed and forfeit remaining balance"
+                }
+            )
+        
+        # ═══════════════════════════════════════════════════════════
+        # STEP 4: Check for recent pending payments (<1 hour)
+        # ═══════════════════════════════════════════════════════════
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        
+        result = await db.execute(
+            select(Payment).where(
+                Payment.user_id == user_id,
+                Payment.status.in_([
+                    PaymentStatus.PENDING,
+                    PaymentStatus.TOKEN_OBTAINED,
+                    PaymentStatus.CALLBACK_RECEIVED
+                ]),
+                Payment.created_at > one_hour_ago
+            )
+        )
+        recent_pending = result.scalars().all()
+        
+        if recent_pending:
+            raise ConflictException(
+                f"Account has {len(recent_pending)} payment(s) in progress. "
+                "Please wait at least 1 hour after payment initiation before deleting account."
+            )
+        
+        # ═══════════════════════════════════════════════════════════
+        # STEP 5: Cancel old pending payments (>1 hour old)
+        # ═══════════════════════════════════════════════════════════
+        result = await db.execute(
+            select(Payment).where(
+                Payment.user_id == user_id,
+                Payment.status.in_([
+                    PaymentStatus.PENDING,
+                    PaymentStatus.TOKEN_OBTAINED,
+                    PaymentStatus.CALLBACK_RECEIVED
+                ]),
+                Payment.created_at <= one_hour_ago
+            )
+        )
+        old_pending = result.scalars().all()
+        
+        cancelled_payments = []
+        for payment in old_pending:
+            payment.status = PaymentStatus.FAILED
+            payment.failure_reason = "Account deletion - payment cancelled"
+            payment.updated_at = datetime.now(timezone.utc)
+            cancelled_payments.append({
+                "payment_id": payment.id,
+                "amount": payment.amount,
+                "created_at": payment.created_at.isoformat()
+            })
+        
+        # ═══════════════════════════════════════════════════════════
+        # STEP 6: Soft delete - anonymize and deactivate
+        # ═══════════════════════════════════════════════════════════
+        import uuid
+        
+        now = datetime.now(timezone.utc)
+        deletion_uuid = str(uuid.uuid4())[:8]
+        
+        # Store original values for logging
+        original_email = user.email
+        original_phone = user.phone_number
+        original_username = user.username
+        
+        # Anonymize
+        user.is_active = False
+        user.deleted_at = now
+        user.email = f"deleted_{deletion_uuid}@deleted.local"
+        user.phone_number = None
+        user.username = None
+        user.full_name = None
+        user.avatar_url = None
+        user.updated_at = now
+        
+        await db.flush()
+        
+        # ═══════════════════════════════════════════════════════════
+        # STEP 7: Log admin alert if balance was forfeited
+        # ═══════════════════════════════════════════════════════════
+        forfeited_balance = wallet.balance if wallet.balance > 0 else 0
+        
+        if forfeited_balance > 0:
+            logger.warning(
+                "account_deleted_with_forfeited_balance",
+                user_id=user_id,
+                original_email=original_email,
+                original_phone=original_phone,
+                forfeited_amount=forfeited_balance,
+                wallet_id=wallet.id,
+            )
+        
+        logger.info(
+            "account_soft_deleted",
+            user_id=user_id,
+            original_email=original_email,
+            original_phone=original_phone,
+            original_username=original_username,
+            forfeited_balance=forfeited_balance,
+            cancelled_payments_count=len(cancelled_payments),
+        )
+        
+        await db.commit()
+        
+        # ═══════════════════════════════════════════════════════════
+        # STEP 8: Return summary
+        # ═══════════════════════════════════════════════════════════
+        return {
+            "user_id": user_id,
+            "deleted_at": now.isoformat(),
+            "forfeited_balance": forfeited_balance,
+            "cancelled_payments": cancelled_payments,
+            "data_retention_notice": (
+                "Your chat history and messages will be permanently deleted within 30 days. "
+                "Payment records are retained for legal compliance."
+            )
+        }

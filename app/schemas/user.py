@@ -172,4 +172,14 @@ class AccountDeleteRequest(BaseModel):
     password: str
     confirm_email: EmailStr
 
-
+class AccountDeleteRequest(BaseModel):
+    """Request body for self-deletion"""
+    password: str = Field(..., min_length=1, description="Your account password")
+    confirm_deletion: bool = Field(
+        ...,
+        description="Must be True — confirms you understand deletion is irreversible"
+    )
+    forfeit_balance: bool = Field(
+        False,
+        description="Must be True if wallet has remaining balance to forfeit"
+    )
