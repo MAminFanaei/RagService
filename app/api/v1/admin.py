@@ -70,31 +70,31 @@ async def list_all_users(
 #     }
 
 
-@router.patch("/users/{user_id}", response_model=UserStatsResponse)
-async def update_user_settings(user_id: str, updates: AdminUserUpdate, admin: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    user = await UserService.get_by_id(db, user_id)
-    if not user:
-        raise NotFoundException("User not found")
+# @router.patch("/users/{user_id}", response_model=UserStatsResponse)
+# async def update_user_settings(user_id: str, updates: AdminUserUpdate, admin: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+#     user = await UserService.get_by_id(db, user_id)
+#     if not user:
+#         raise NotFoundException("User not found")
     
-    if updates.is_admin is not None:
-        user.is_admin = updates.is_admin
-    if updates.max_messages_per_day is not None:
-        user.max_messages_per_day = updates.max_messages_per_day
-    if updates.rate_limit_per_minute is not None:
-        user.rate_limit_per_minute = updates.rate_limit_per_minute
+#     if updates.is_admin is not None:
+#         user.is_admin = updates.is_admin
+#     if updates.max_messages_per_day is not None:
+#         user.max_messages_per_day = updates.max_messages_per_day
+#     if updates.rate_limit_per_minute is not None:
+#         user.rate_limit_per_minute = updates.rate_limit_per_minute
     
-    await db.commit()
-    await db.refresh(user)
-    stats = await UserService.get_user_stats(db, user_id)
+#     await db.commit()
+#     await db.refresh(user)
+#     stats = await UserService.get_user_stats(db, user_id)
     
-    return {
-        "id": user.id, "email": user.email, "username": user.username,
-        "auth_provider": user.auth_provider.value, "is_active": user.is_active,
-        "is_admin": user.is_admin, "created_at": user.created_at,
-        "last_login_at": user.last_login_at, "total_chats": stats.get("total_chats", 0),
-        "total_messages": stats.get("total_messages", 0), "messages_today": stats.get("messages_today", 0),
-        "max_messages_per_day": user.max_messages_per_day, "rate_limit_per_minute": user.rate_limit_per_minute
-    }
+#     return {
+#         "id": user.id, "email": user.email, "username": user.username,
+#         "auth_provider": user.auth_provider.value, "is_active": user.is_active,
+#         "is_admin": user.is_admin, "created_at": user.created_at,
+#         "last_login_at": user.last_login_at, "total_chats": stats.get("total_chats", 0),
+#         "total_messages": stats.get("total_messages", 0), "messages_today": stats.get("messages_today", 0),
+#         "max_messages_per_day": user.max_messages_per_day, "rate_limit_per_minute": user.rate_limit_per_minute
+#     }
 
 
 # @router.get("/users/{user_id}/conversations", response_model=List[ConversationExport])
