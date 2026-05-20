@@ -12,7 +12,7 @@ import re
 
 # revision identifiers, used by Alembic.
 revision = '4078008a858e'
-down_revision = None  # <-- MUST be None for first migration
+down_revision = '000000000000'  # <-- MUST be None for first migration
 branch_labels = None
 depends_on = None
 

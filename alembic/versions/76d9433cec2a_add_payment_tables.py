@@ -1,19 +1,4 @@
-"""create payment tables
-Revision ID: 76d9433cec2a
-Revises: 77f7a32ba333
-Create Date: 2024-01-15 00:00:00.000000
-Creates the 6 payment-related tables:
-    1. discount_codes   - Discount code definitions
-    2. wallets          - User wallets (one per user)
-    3. payments         - Payment transactions
-    4. wallet_transactions - Wallet ledger entries
-    5. reverses         - Payment reversal records
-    6. discount_usages  - Tracks discount code usage
-IMPORTANT: Tables are created in their ORIGINAL state, BEFORE migration
-f760ccff3945 modifies them. That migration will alter columns, indexes, and FKs.
-Safety: Uses _table_exists() guards so this migration is safe to run on
-databases where tables already exist (created by Base.metadata.create_all).
-"""
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql

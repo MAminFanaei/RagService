@@ -110,14 +110,15 @@ class RAGEngine:
         
         # Index documents if needed
         if settings.INDEX_THE_DOCS:
+            logger.info(f"Trying to index documents ...")
             try:
                 self.es_store.client.indices.delete(index=settings.ELASTICSEARCH_INDEX_NAME)
-                logger.info("Old documents erased", index=settings.ELASTICSEARCH_INDEX_NAME)
+                logger.info("Old documents successfully erased", index=settings.ELASTICSEARCH_INDEX_NAME)
             except Exception as e:
-                logger.info("Index delete skipped", error=str(e))
+                logger.info("deleting old index skipped", error=str(e))
             finally:
                 self.es_store.add_documents(self.docs)
-                logger.info(f"✓ Indexed {len(self.docs)} documents")
+                logger.info(f"✓ {len(self.docs)} documents successfully Indexed")
         
         # Initialize retriever
         self.retriever = Retriever(
