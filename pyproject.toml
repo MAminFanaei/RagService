@@ -58,7 +58,7 @@ dependencies = [
     "langgraph==0.6.5",
     "sentence-transformers==5.0.0",
     "torch==2.7.1",
-]
+    ]
 
 # RUN poetry install --with test
 # ── Test dependencies ───────────────────────────────────────

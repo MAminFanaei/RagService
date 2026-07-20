@@ -3,10 +3,11 @@
 Alembic Migration Environment - Updated for Async SQLAlchemy
 
 Uses SYNC engine for migrations (Alembic doesn't support async).
+Covers both app/ models and ingestion/ models in one migration run.
 """
 
 from logging.config import fileConfig
-from sqlalchemy import pool
+from sqlalchemy import pool, MetaData
 from alembic import context
 import os
 import sys
@@ -24,7 +25,11 @@ sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..'
 
 from app.config import settings
 from app.core.database import Base, sync_engine, SYNC_DATABASE_URL
-from app.models import *  # Import all models
+from app.models import *  # Import all app models  # noqa: F401, F403
+
+# -- Ingestion models (fully independent Base) ------------------------------ #
+from ingestion.models import Document, Chunk  # noqa: F401  — registers tables on IngestionBase
+from ingestion.database import Base as IngestionBase
 
 # this is the Alembic Config object
 config = context.config
@@ -37,8 +42,10 @@ config.set_main_option('sqlalchemy.url', SYNC_DATABASE_URL)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Add your model's MetaData object here
-target_metadata = Base.metadata
+# Merge both metadata objects so Alembic sees all tables in one pass.
+# app Base.metadata  → all app + payment tables
+# IngestionBase.metadata → ingestion_documents, ingestion_chunks
+target_metadata = [Base.metadata, IngestionBase.metadata]
 
 
 def run_migrations_offline() -> None:
