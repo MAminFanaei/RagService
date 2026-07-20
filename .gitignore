@@ -4,7 +4,7 @@ __pycache__/
 venv/
 *.log
 .DS_Store
-docs/others/
+docs
 models/*
 what_to_do.md
 *snapshot*
