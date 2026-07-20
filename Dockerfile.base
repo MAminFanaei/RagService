@@ -1,4 +1,5 @@
 # Dockerfile.base
+# FROM docker.io/python:3.10-slim
 FROM python:3.10-slim
 
 # Install runtime + build dependencies in one layer
@@ -7,10 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-libmysqlclient-dev \
     gcc \
     && pip install --upgrade pip \
+    && pip install poetry \
+    && poetry config virtualenvs.create false \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy and install Python requirements (this layer will be cached until requirements.txt changes)
-COPY requirements.txt .
-RUN pip install -r requirements.txt \
+# Copy only dependency files first (layer cache will hold until these change)
+COPY pyproject.toml poetry.lock ./
+
+# Install only production dependencies
+RUN poetry install --only main --without gpu,dev,test --no-root
+# RUN poetry install --only main
+RUN poetry install --only gpu --no-root

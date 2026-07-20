@@ -2,91 +2,95 @@
 
 services:
 
-  # app:
-  #   # build: 
-  #   #   context: .
-  #   #   dockerfile: Dockerfile
-  #   image: rag_service_app:latest
-  #   container_name: rag_service_app
-  ##   ports:
-  # #    - "8000:8000" # dont use it since we are using nginx
-  # #     - "127.0.0.1:8000:8000"
+  app:
+    # build: 
+    #   context: .
+    #   dockerfile: Dockerfile
 
-    # environment:
-  #     - DATABASE_URL=${DATABASE_URL}
-  #     - REDIS_URL=${REDIS_URL} 
-  #     - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
-  #     # - SEP_TERMINAL_ID=${SEP_TERMINAL_ID}
-  #     # - SEP_PAYMENT_URL=${SEP_PAYMENT_URL}
-  #     # - SEP_VERIFY_URL=${SEP_VERIFY_URL}
-  #     # - SEP_REVERSE_URL=${SEP_REVERSE_URL}
-  #     # - PAYMENT_CALLBACK_URL=${PAYMENT_CALLBACK_URL}
-  #     # - FRONTEND_PAYMENT_RESULT_URL=${FRONTEND_PAYMENT_RESULT_URL}
-  #   volumes:
-  #     - ./app:/app/app
-  #     - ./models:/app/models
-  #     - ./docs:/app/docs
-  #     - ./alembic:/app/alembic
-  #     - ./alembic.ini:/app/alembic.ini
-  #     - /etc/ssl/private/api-key.pem:/app/certs/api-key.pem:ro
-  #     - /etc/ssl/certs/api-cert.pem:/app/certs/api-cert.pem:ro
+    # image: rag_service_app:latest
+    image: ragservice-app:latest
+    container_name: ragservice-app
+    ports: # dont use it since we are using nginx
+     - "127.0.0.1:8000:8000" 
+    expose: # documents the port for other containers (optional, mostly for clarity)
+      - "8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL} 
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
+      # - SEP_TERMINAL_ID=${SEP_TERMINAL_ID}
+      # - SEP_PAYMENT_URL=${SEP_PAYMENT_URL}
+      # - SEP_VERIFY_URL=${SEP_VERIFY_URL}
+      # - SEP_REVERSE_URL=${SEP_REVERSE_URL}
+      # - PAYMENT_CALLBACK_URL=${PAYMENT_CALLBACK_URL}
+      # - FRONTEND_PAYMENT_RESULT_URL=${FRONTEND_PAYMENT_RESULT_URL}
+    volumes:
+      - ./app:/app/app
+      - ./models:/app/models
+      - ./docs:/app/docs
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      # - /etc/ssl/private/api-key.pem:/app/certs/api-key.pem:ro # No need to mount SSL certs here anymore if nginx handles SSL
+      # - /etc/ssl/certs/api-cert.pem:/app/certs/api-cert.pem:ro # No need to mount SSL certs here anymore if nginx handles SSL
 
-  #   command:
-  #     - sh
-  #     - -c
-  #     - >
-  #         alembic upgrade head &&
-  #         exec gunicorn app.main:app
-  #         --worker-class uvicorn.workers.UvicornWorker
-  #         --workers 1
-  #         #--bind 0.0.0.0:8000 # we are using nginx
-  #         --worker-connections 500
-  #         --timeout 30
-  #         --keep-alive 2
-  #         --log-level info
-  #         --access-logfile -
+    command:
+      - sh
+      - -c
+      - >
+          alembic upgrade head &&
+          exec gunicorn app.main:app
+          --worker-class uvicorn.workers.UvicornWorker
+          --workers 1
+          --bind 0.0.0.0:8000
+          --worker-connections 500
+          --timeout 30
+          --keep-alive 2
+          --log-level info
+          --access-logfile -
 
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     start_period: 40s
-  #     retries: 3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
 
-  #   depends_on:
-  #     mysql:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_started
-  #     elasticsearch:
-  #       condition: service_healthy
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
 
-  #   env_file:
-  #     - .env
-  #   restart: unless-stopped
-  #   networks:
-  #     - rag_network
-  #   deploy: # 🔴 VPS is cpu only
-  #     replicas: 1
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: all
-  #             capabilities: [gpu]
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - rag_network
+    deploy: # 🔴 VPS is cpu only
+      replicas: 1
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # MySQL Database
   mysql:
     image: mysql:8.0.39 #🔴 hardcoded !
     # image: mysql:5.7.42 #🔴 hardcoded !
-    container_name: rag_service_mysql
+    container_name: ragservice_mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     ports:
-      - "3306:3306" #🔴 hardcoded !
+      - "127.0.0.1:3306:3306"  # Dev only, not reachable from internet
+    expose: # documents the port for other containers (optional, mostly for clarity)
+      - "3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -98,12 +102,14 @@ services:
     networks:
       - rag_network
 
-  # Redis Cache
+  # Redis
   redis:
     image: valkey/valkey:8 #🔴 hardcoded !
-    container_name: rag_service_redis
+    container_name: ragservice_redis
     ports:
-      - "6379:6379" #🔴 hardcoded !
+      - "127.0.0.1:6379:6379" # Dev only, not reachable from internet
+    expose: # documents the port for other containers (optional, mostly for clarity)
+      - "6379"
     volumes:
       - redis_data:/data
     command: >
@@ -123,7 +129,7 @@ services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.0.3 #🔴 hardcoded !
     # image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0 #🔴 hardcoded !
-    container_name: rag_service_elasticsearch
+    container_name: ragservice_elasticsearch
     environment:
       - discovery.type=single-node
       - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD:-ragflow_test}
@@ -131,8 +137,10 @@ services:
       - xpack.security.http.ssl.enabled=false
       - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
     ports:
-      - "9200:9200" #🔴 hardcoded !
-      - "9300:9300" #🔴 hardcoded !
+      - "127.0.0.1:9200:9200"  # Dev only, not reachable from internet
+    #   - "9300:9300" #🔴 hardcoded !
+    expose:  # documents the port for other containers (optional, mostly for clarity)
+      - "9200"
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     healthcheck:
@@ -144,16 +152,28 @@ services:
     restart: unless-stopped
     networks:
       - rag_network
+  
+  
+  nginx:
+    image: nginx:alpine
+    container_name: ragservice_nginx
+    ports:
+      - "80:80"
+      # - "443:443"
+    volumes:
+      - ./nginx_with_front.conf:/etc/nginx/conf.d/default.conf:ro
+      ## If you want SSL terminated at nginx:
+      # - /etc/ssl/certs/api-cert.pem:/etc/nginx/certs/api-cert.pem:ro
+      # - /etc/ssl/private/api-key.pem:/etc/nginx/certs/api-key.pem:ro
+    depends_on:
+      app:
+        condition: service_healthy
+      # frontend:                       
+      #   condition: service_started
+    restart: unless-stopped
+    networks:
+      - rag_network
 
-  # nginx:
-  #   image: nginx:alpine
-  #   ports:
-  #     - "80:80"
-  #   volumes:
-  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-  #   depends_on:
-  #     - app
-  #   restart: unless-stopped
 
 volumes:
   mysql_data: 

@@ -1,5 +1,5 @@
 # Use the base image you built once
-FROM myapp-base:latest
+FROM ragservice-base:latest
 
 WORKDIR /app
 
@@ -8,5 +8,4 @@ COPY ./app ./app
 COPY ./alembic ./alembic
 COPY alembic.ini .
 COPY ./docs ./docs
-# COPY .env .
 COPY ./models ./models

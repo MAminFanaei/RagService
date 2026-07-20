@@ -10,3 +10,4 @@ what_to_do.md
 *snapshot*
 .env
 **/prompts.py
+poetry.lock
