@@ -1,0 +1,2 @@
+# Run the unified backup script every day at 3:00 AM
+0 3 * * * /usr/local/bin/backup.sh

@@ -1,4 +1,4 @@
-# version ??
+# version: "3.8"
 
 services:
 
@@ -130,11 +130,13 @@ services:
       - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=false
       - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - path.repo=/usr/share/elasticsearch/snapshots
     ports:
       - "9200:9200" #🔴 hardcoded !
       - "9300:9300" #🔴 hardcoded !
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
+      - es_snapshots:/usr/share/elasticsearch/snapshots 
     healthcheck:
       test: ["CMD-SHELL", "curl -u elastic:${ELASTICSEARCH_PASSWORD:-ragflow_test} http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
@@ -155,10 +157,41 @@ services:
   #     - app
   #   restart: unless-stopped
 
+  backup:
+    build: ./backups
+    container_name: rag_service_backup
+    restart: unless-stopped
+    environment:
+      # MySQL credentials
+      - MYSQL_HOST=mysql
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      # Elasticsearch credentials
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD}
+    volumes:
+      # Mount the main backups directory for mysql/redis dumps
+      - backups:/backups
+      # Mount the redis data volume read-only to copy its files
+      - redis_data:/redis-data:ro
+    depends_on:
+      # Ensure all databases are ready before attempting a backup
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - rag_network
+
 volumes:
   mysql_data: 
   redis_data: 
   elasticsearch_data: 
+  es_snapshots: {} # For Elasticsearch's own snapshot tool
+  backups: {}
 
 networks:
   rag_network:
