@@ -1,5 +1,5 @@
 [project]
-name = "ragservice"
+name = "rag-service-claude"
 version = "0.1.0"
 description = ""
 authors = [
