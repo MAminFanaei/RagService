@@ -26,28 +26,6 @@ Architecture
 - Data: MySQL (async driver), Alembic migrations; Redis for caching/OTP/rate‑limits/locks; Elasticsearch as vector store
 - External integrations: payment gateway,  SMS OTP, OAuth (Google/GitHub)
 
-```mermaid
-flowchart LR
-  U[Client] -->|JWT| A[FastAPI]
-  subgraph API
-    A --> AU[Auth & OAuth]
-    A --> CH[Chats & Messages]
-    A --> CR[Credits & Payments]
-    A --> AD[Admin]
-  end
-
-  CH --> RAG[RAG Engine]
-  RAG --> RET[Retriever (ES vector search)]
-  RET --> ES[(Elasticsearch)]
-  RAG --> LLM[LLM (Enhancer/Generator)]
-  RAG --> RS[Redis (state, rate‑limits, locks)]
-  CH --> DB[(MySQL 8 - SQLAlchemy/Alembic)]
-
-  CR --> PGW[SEP Payment Gateway]
-  AU --> SMS[Melipayamak SMS]
-  AU --> OA[OAuth: Google/GitHub]
-```
-
 Tech stack
 - Python 3.10, FastAPI, Uvicorn/Gunicorn
 - SQLAlchemy 2.x (async) + Alembic, MySQL 8.0.39
